@@ -511,7 +511,7 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
     if (globeRef.current) {
       const g = globeRef.current
       // Camera position - nice angle
-      g.pointOfView({ lat: 30, lng: 10, altitude: 1.8 }, 0)
+      g.pointOfView({ lat: 30, lng: 10, altitude: 1.6 }, 0)
       // Auto-rotate
       const controls = g.controls()
       if (controls) {
@@ -583,29 +583,28 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
         {/* Globe */}
         <Reveal delay={300}>
           <div className="relative flex justify-center" ref={containerRef}>
-            {/* Container clips the oversized globe — no visible rectangle */}
+            {/* Globe wrapper — no visible rectangle */}
             <div
               className="relative transition-opacity duration-1000"
               style={{
                 opacity: globeReady ? 1 : 0,
                 width: globeSize,
                 height: globeSize,
-                overflow: 'hidden',
               }}
             >
-              {/* Globe is rendered larger and offset so canvas edges are hidden */}
+              {/* Globe rendered 2x larger, centered, canvas edges far outside visible area */}
               <div style={{
                 position: 'absolute',
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                width: globeSize * 1.5,
-                height: globeSize * 1.5,
+                width: globeSize * 2,
+                height: globeSize * 2,
               }}>
               <Globe
                 ref={globeRef}
-                width={globeSize * 1.5}
-                height={globeSize * 1.5}
+                width={globeSize * 2}
+                height={globeSize * 2}
                 backgroundColor="#060d1b"
                 globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
                 bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
@@ -658,10 +657,18 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
                 onGlobeReady={onGlobeReady}
               />
               </div>
-              {/* Massive inset shadow overlay to blend edges seamlessly */}
-              <div className="absolute inset-0 pointer-events-none" style={{
-                boxShadow: 'inset 0 0 80px 60px #060d1b, inset 0 0 160px 100px #060d1b',
-              }} />
+              {/* Edge covers — solid color bars that hide canvas borders */}
+              <div className="absolute pointer-events-none" style={{ top: 0, left: 0, right: 0, height: '15%', background: 'linear-gradient(to bottom, #060d1b 0%, #060d1b 40%, transparent 100%)' }} />
+              <div className="absolute pointer-events-none" style={{ bottom: 0, left: 0, right: 0, height: '15%', background: 'linear-gradient(to top, #060d1b 0%, #060d1b 40%, transparent 100%)' }} />
+              <div className="absolute pointer-events-none" style={{ top: 0, bottom: 0, left: 0, width: '15%', background: 'linear-gradient(to right, #060d1b 0%, #060d1b 40%, transparent 100%)' }} />
+              <div className="absolute pointer-events-none" style={{ top: 0, bottom: 0, right: 0, width: '15%', background: 'linear-gradient(to left, #060d1b 0%, #060d1b 40%, transparent 100%)' }} />
+              {/* Corner fills */}
+              <div className="absolute pointer-events-none" style={{ top: 0, left: 0, width: '25%', height: '25%', background: '#060d1b' }} />
+              <div className="absolute pointer-events-none" style={{ top: 0, right: 0, width: '25%', height: '25%', background: '#060d1b' }} />
+              <div className="absolute pointer-events-none" style={{ bottom: 0, left: 0, width: '25%', height: '25%', background: '#060d1b' }} />
+              <div className="absolute pointer-events-none" style={{ bottom: 0, right: 0, width: '25%', height: '25%', background: '#060d1b' }} />
+              {/* Radial vignette on top for smooth circular blend */}
+              <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(circle at 50% 50%, transparent 25%, rgba(6,13,27,0.4) 35%, rgba(6,13,27,0.85) 45%, #060d1b 55%)' }} />
             </div>
 
             {/* Legend */}
