@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ReactNode, useCallback, useMemo } from 'react'
-import createGlobe from 'cobe'
+import Globe from 'react-globe.gl'
 import IMG from './images'
 
 // ─── CINEMATIC PRELOADER ─────────────────────────────────
@@ -436,14 +436,24 @@ function PartnerLogos({ lang }: { lang: Lang }) {
   )
 }
 
-// ─── SATELLITE GLOBE (COBE) ─────────────────────────────
+// ─── SATELLITE GLOBE (react-globe.gl) ─────────────────────
 function SatelliteCoverageMap({ lang }: { lang: Lang }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const pointerInteracting = useRef<number | null>(null)
-  const pointerInteractionMovement = useRef(0)
-  const phiRef = useRef(0)
+  const globeRef = useRef<any>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const [stats, setStats] = useState({ sats: 0, coverage: 0 })
-  const widthRef = useRef(0)
+  const [globeReady, setGlobeReady] = useState(false)
+  const [globeSize, setGlobeSize] = useState(550)
+
+  // Responsive sizing
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth
+      setGlobeSize(w < 640 ? Math.min(w - 40, 380) : w < 1024 ? 480 : 600)
+    }
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
 
   // Animated counter
   useEffect(() => {
@@ -456,68 +466,72 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
     return () => clearInterval(t)
   }, [])
 
-  // COBE globe
-  useEffect(() => {
-    let currentPhi = 0
-    let currentTheta = 0.3
-    const doublePi = Math.PI * 2
+  // Airport hub data
+  const hubData = useMemo(() => [
+    { lat: 48.86, lng: 2.35, city: 'Paris CDG', size: 0.6 },
+    { lat: 40.64, lng: -73.78, city: 'New York JFK', size: 0.6 },
+    { lat: 33.94, lng: -118.41, city: 'Los Angeles LAX', size: 0.5 },
+    { lat: 25.25, lng: 55.36, city: 'Dubai DXB', size: 0.6 },
+    { lat: 1.35, lng: 103.82, city: 'Singapore SIN', size: 0.5 },
+    { lat: 35.68, lng: 139.77, city: 'Tokyo NRT', size: 0.5 },
+    { lat: -33.87, lng: 151.21, city: 'Sydney SYD', size: 0.4 },
+    { lat: 51.47, lng: -0.46, city: 'London LHR', size: 0.5 },
+    { lat: 55.75, lng: 37.62, city: 'Moscow SVO', size: 0.4 },
+    { lat: 22.30, lng: 114.17, city: 'Hong Kong HKG', size: 0.5 },
+    { lat: 37.57, lng: 126.98, city: 'Seoul ICN', size: 0.4 },
+    { lat: -23.55, lng: -46.63, city: 'São Paulo GRU', size: 0.4 },
+    { lat: 19.43, lng: -99.13, city: 'Mexico City MEX', size: 0.4 },
+    { lat: 28.61, lng: 77.21, city: 'Delhi DEL', size: 0.5 },
+  ], [])
 
-    // Markers: [lat, lng, size]
-    const markerLocations: [number, number, number][] = [
-      [48.86, 2.35, 0.05],      // Paris
-      [40.64, -73.78, 0.05],    // NYC
-      [33.94, -118.41, 0.04],   // LA
-      [25.25, 55.36, 0.05],     // Dubai
-      [1.35, 103.82, 0.04],     // Singapore
-      [35.68, 139.77, 0.04],    // Tokyo
-      [-33.87, 151.21, 0.03],   // Sydney
-      [51.47, -0.46, 0.04],     // London
-      [55.75, 37.62, 0.03],     // Moscow
-      [22.30, 114.17, 0.04],    // Hong Kong
-      [37.57, 126.98, 0.03],    // Seoul
-      [-23.55, -46.63, 0.03],   // São Paulo
-      [19.43, -99.13, 0.03],    // Mexico City
-      [28.61, 77.21, 0.04],     // Delhi
-    ]
+  // Animated flight arcs between hubs
+  const arcsData = useMemo(() => [
+    { startLat: 48.86, startLng: 2.35, endLat: 40.64, endLng: -73.78, color: ['rgba(0,210,255,0.6)', 'rgba(59,130,246,0.3)'] },
+    { startLat: 48.86, startLng: 2.35, endLat: 25.25, endLng: 55.36, color: ['rgba(59,130,246,0.6)', 'rgba(139,92,246,0.3)'] },
+    { startLat: 40.64, startLng: -73.78, endLat: 33.94, endLng: -118.41, color: ['rgba(0,210,255,0.5)', 'rgba(52,211,153,0.3)'] },
+    { startLat: 25.25, startLng: 55.36, endLat: 1.35, endLng: 103.82, color: ['rgba(139,92,246,0.6)', 'rgba(245,158,11,0.3)'] },
+    { startLat: 51.47, startLng: -0.46, endLat: 35.68, endLng: 139.77, color: ['rgba(59,130,246,0.5)', 'rgba(0,210,255,0.3)'] },
+    { startLat: 1.35, startLng: 103.82, endLat: -33.87, endLng: 151.21, color: ['rgba(52,211,153,0.5)', 'rgba(59,130,246,0.3)'] },
+    { startLat: 22.30, startLng: 114.17, endLat: 37.57, endLng: 126.98, color: ['rgba(245,158,11,0.5)', 'rgba(139,92,246,0.3)'] },
+    { startLat: 40.64, startLng: -73.78, endLat: -23.55, endLng: -46.63, color: ['rgba(0,210,255,0.4)', 'rgba(52,211,153,0.3)'] },
+    { startLat: 48.86, startLng: 2.35, endLat: 55.75, endLng: 37.62, color: ['rgba(59,130,246,0.5)', 'rgba(245,158,11,0.3)'] },
+    { startLat: 25.25, startLng: 55.36, endLat: 28.61, endLng: 77.21, color: ['rgba(139,92,246,0.5)', 'rgba(52,211,153,0.3)'] },
+    { startLat: 33.94, startLng: -118.41, endLat: 35.68, endLng: 139.77, color: ['rgba(0,210,255,0.5)', 'rgba(245,158,11,0.3)'] },
+    { startLat: 51.47, startLng: -0.46, endLat: 25.25, endLng: 55.36, color: ['rgba(59,130,246,0.5)', 'rgba(139,92,246,0.3)'] },
+  ], [])
 
-    const canvas = canvasRef.current!
-    const onResize = () => {
-      widthRef.current = canvas.offsetWidth
-    }
-    window.addEventListener('resize', onResize)
-    onResize()
+  // Ring pulse data (same as hubs)
+  const ringsData = useMemo(() => hubData.map(h => ({
+    lat: h.lat, lng: h.lng, maxR: 3, propagationSpeed: 2, repeatPeriod: 1200
+  })), [hubData])
 
-    const globe = createGlobe(canvas, {
-      devicePixelRatio: 2,
-      width: widthRef.current * 2,
-      height: widthRef.current * 2,
-      phi: 0,
-      theta: 0.3,
-      dark: 1,
-      diffuse: 1.2,
-      mapSamples: 36000,
-      mapBrightness: 2.5,
-      baseColor: [0.05, 0.1, 0.2],
-      markerColor: [0.1, 0.8, 0.5],
-      glowColor: [0.08, 0.18, 0.4],
-      markers: markerLocations.map(([lat, lng, size]) => ({ location: [lat, lng], size })),
-      onRender: (state) => {
-        // Auto-rotate when not interacting
-        if (!pointerInteracting.current) {
-          currentPhi += 0.003
-        }
-        state.phi = currentPhi + pointerInteractionMovement.current
-        state.theta = currentTheta
-        state.width = widthRef.current * 2
-        state.height = widthRef.current * 2
-      },
-    })
-
-    setTimeout(() => { if (canvas) canvas.style.opacity = '1' })
-
-    return () => {
-      globe.destroy()
-      window.removeEventListener('resize', onResize)
+  // Setup globe appearance on ready
+  const onGlobeReady = useCallback(() => {
+    setGlobeReady(true)
+    if (globeRef.current) {
+      const g = globeRef.current
+      // Camera position - nice angle
+      g.pointOfView({ lat: 30, lng: 10, altitude: 2.2 }, 0)
+      // Auto-rotate
+      const controls = g.controls()
+      if (controls) {
+        controls.autoRotate = true
+        controls.autoRotateSpeed = 0.4
+        controls.enableZoom = true
+        controls.minDistance = 200
+        controls.maxDistance = 500
+        controls.enableDamping = true
+        controls.dampingFactor = 0.1
+      }
+      // Scene & renderer customization
+      const scene = g.scene()
+      if (scene) {
+        scene.background = null // transparent background
+      }
+      const renderer = g.renderer()
+      if (renderer) {
+        renderer.setClearColor(0x000000, 0)
+      }
     }
   }, [])
 
@@ -525,8 +539,8 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
     <section className="py-24 lg:py-32 bg-[#060d1b] relative overflow-hidden">
       {/* Background glows */}
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-blue-500/[0.04] blur-[120px]" />
-        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] rounded-full bg-emerald-500/[0.02] blur-[100px]" />
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full bg-blue-500/[0.05] blur-[150px]" />
+        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] rounded-full bg-cyan-500/[0.03] blur-[120px]" />
       </div>
 
       <div className="relative z-10 max-w-[1400px] mx-auto px-6 lg:px-10">
@@ -566,58 +580,93 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
 
         {/* Globe */}
         <Reveal delay={300}>
-          <div className="relative flex justify-center">
-            <div className="relative w-full max-w-[620px] aspect-square">
-              <canvas
-                ref={canvasRef}
-                className="w-full h-full opacity-0 transition-opacity duration-1000"
-                style={{ contain: 'layout paint size', cursor: 'grab' }}
-                onPointerDown={(e) => {
-                  pointerInteracting.current = e.clientX - pointerInteractionMovement.current
-                  if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing'
-                }}
-                onPointerUp={() => {
-                  pointerInteracting.current = null
-                  if (canvasRef.current) canvasRef.current.style.cursor = 'grab'
-                }}
-                onPointerOut={() => {
-                  pointerInteracting.current = null
-                  if (canvasRef.current) canvasRef.current.style.cursor = 'grab'
-                }}
-                onMouseMove={(e) => {
-                  if (pointerInteracting.current !== null) {
-                    const delta = e.clientX - pointerInteracting.current
-                    pointerInteractionMovement.current = delta / 200
-                  }
-                }}
-                onTouchMove={(e) => {
-                  if (pointerInteracting.current !== null && e.touches[0]) {
-                    const delta = e.touches[0].clientX - pointerInteracting.current
-                    pointerInteractionMovement.current = delta / 100
-                  }
-                }}
+          <div className="relative flex justify-center" ref={containerRef}>
+            <div
+              className="relative transition-opacity duration-1000"
+              style={{ opacity: globeReady ? 1 : 0, width: globeSize, height: globeSize }}
+            >
+              <Globe
+                ref={globeRef}
+                width={globeSize}
+                height={globeSize}
+                backgroundColor="rgba(0,0,0,0)"
+                globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
+                bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
+                atmosphereColor="#3b82f6"
+                atmosphereAltitude={0.2}
+                showAtmosphere={true}
+
+                // Hub points
+                pointsData={hubData}
+                pointLat="lat"
+                pointLng="lng"
+                pointColor={() => 'rgba(52,211,153,0.9)'}
+                pointAltitude={0.01}
+                pointRadius="size"
+                pointsMerge={true}
+
+                // Flight arcs
+                arcsData={arcsData}
+                arcStartLat="startLat"
+                arcStartLng="startLng"
+                arcEndLat="endLat"
+                arcEndLng="endLng"
+                arcColor="color"
+                arcDashLength={0.6}
+                arcDashGap={0.3}
+                arcDashAnimateTime={3000}
+                arcStroke={0.4}
+                arcAltitudeAutoScale={0.4}
+
+                // Ring pulses
+                ringsData={ringsData}
+                ringLat="lat"
+                ringLng="lng"
+                ringMaxRadius="maxR"
+                ringPropagationSpeed="propagationSpeed"
+                ringRepeatPeriod="repeatPeriod"
+                ringColor={() => (t: number) => `rgba(52,211,153,${1 - t})`}
+
+                // Labels
+                labelsData={hubData}
+                labelLat="lat"
+                labelLng="lng"
+                labelText="city"
+                labelSize={0.6}
+                labelDotRadius={0.3}
+                labelColor={() => 'rgba(255,255,255,0.5)'}
+                labelResolution={2}
+                labelAltitude={0.015}
+
+                onGlobeReady={onGlobeReady}
               />
-              {/* Radial fade edges */}
-              <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(circle at 50% 50%, transparent 40%, #060d1b 72%)' }} />
+              {/* Vignette overlay to blend into background */}
+              <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(circle at 50% 50%, transparent 35%, #060d1b 70%)' }} />
             </div>
 
             {/* Legend */}
-            <div className="absolute bottom-8 left-4 lg:left-8 flex flex-col gap-2 z-10">
+            <div className="absolute bottom-6 left-4 lg:left-8 flex flex-col gap-2 z-10">
               {[
                 { name: 'Starlink · LEO 550km', color: '#3b82f6', count: '6 300+' },
                 { name: 'OneWeb · LEO 1 200km', color: '#8b5cf6', count: '648' },
                 { name: 'Intelsat · GEO 35 786km', color: '#f59e0b', count: '50+' },
               ].map(c => (
-                <div key={c.name} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/[0.04]">
+                <div key={c.name} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/[0.06]">
                   <div className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color, boxShadow: `0 0 8px ${c.color}` }} />
                   <span className="text-[10px] text-white/50 font-medium">{c.name}</span>
                   <span className="text-[9px] text-white/25">{c.count}</span>
                 </div>
               ))}
             </div>
-            <div className="absolute bottom-8 right-4 lg:right-8 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/[0.04] z-10">
-              <div className="w-2 h-2 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 8px rgba(52,211,153,0.6)' }} />
-              <span className="text-[10px] text-white/40">{lang === 'fr' ? 'Hubs aéroportuaires' : 'Airport hubs'}</span>
+            <div className="absolute bottom-6 right-4 lg:right-8 flex flex-col gap-2 z-10">
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/[0.06]">
+                <div className="w-2 h-2 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 8px rgba(52,211,153,0.6)' }} />
+                <span className="text-[10px] text-white/40">{lang === 'fr' ? 'Hubs aéroportuaires' : 'Airport hubs'}</span>
+              </div>
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-md border border-white/[0.06]">
+                <div className="w-6 h-[2px] rounded-full bg-gradient-to-r from-cyan-400 to-blue-500" />
+                <span className="text-[10px] text-white/40">{lang === 'fr' ? 'Routes de données' : 'Data routes'}</span>
+              </div>
             </div>
           </div>
         </Reveal>
