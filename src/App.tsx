@@ -511,7 +511,7 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
     if (globeRef.current) {
       const g = globeRef.current
       // Camera position - nice angle
-      g.pointOfView({ lat: 30, lng: 10, altitude: 2.2 }, 0)
+      g.pointOfView({ lat: 30, lng: 10, altitude: 1.8 }, 0)
       // Auto-rotate
       const controls = g.controls()
       if (controls) {
@@ -583,24 +583,30 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
         {/* Globe */}
         <Reveal delay={300}>
           <div className="relative flex justify-center" ref={containerRef}>
+            {/* Container clips the oversized globe — no visible rectangle */}
             <div
               className="relative transition-opacity duration-1000"
               style={{
                 opacity: globeReady ? 1 : 0,
                 width: globeSize,
                 height: globeSize,
-                borderRadius: '50%',
                 overflow: 'hidden',
-                maskImage: 'radial-gradient(circle at 50% 50%, black 38%, transparent 58%)',
-                WebkitMaskImage: 'radial-gradient(circle at 50% 50%, black 38%, transparent 58%)',
               }}
             >
+              {/* Globe is rendered larger and offset so canvas edges are hidden */}
+              <div style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: globeSize * 1.5,
+                height: globeSize * 1.5,
+              }}>
               <Globe
                 ref={globeRef}
-                width={globeSize}
-                height={globeSize}
-                backgroundColor="rgba(0,0,0,0)"
-                rendererConfig={{ antialias: true, alpha: true }}
+                width={globeSize * 1.5}
+                height={globeSize * 1.5}
+                backgroundColor="#060d1b"
                 globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
                 bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
                 atmosphereColor="#3b82f6"
@@ -651,7 +657,11 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
 
                 onGlobeReady={onGlobeReady}
               />
-              {/* No vignette needed - CSS mask handles seamless fade */}
+              </div>
+              {/* Massive inset shadow overlay to blend edges seamlessly */}
+              <div className="absolute inset-0 pointer-events-none" style={{
+                boxShadow: 'inset 0 0 80px 60px #060d1b, inset 0 0 160px 100px #060d1b',
+              }} />
             </div>
 
             {/* Legend */}
@@ -849,8 +859,10 @@ function LiveBadge({ text }: { text: string }) {
 function HorizontalGallery({ images }: { images: { src: string; label: string }[] }) {
   const ref = useRef<HTMLDivElement>(null)
   const dragging = useRef(false)
+  const didDrag = useRef(false)
   const startX = useRef(0)
   const scrollL = useRef(0)
+  const [lightbox, setLightbox] = useState<number | null>(null)
 
   // Convert vertical wheel to horizontal scroll
   useEffect(() => {
@@ -865,23 +877,92 @@ function HorizontalGallery({ images }: { images: { src: string; label: string }[
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
+  // Keyboard navigation for lightbox
+  useEffect(() => {
+    if (lightbox === null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightbox(null)
+      if (e.key === 'ArrowRight') setLightbox(i => i !== null ? Math.min(i + 1, images.length - 1) : null)
+      if (e.key === 'ArrowLeft') setLightbox(i => i !== null ? Math.max(i - 1, 0) : null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lightbox, images.length])
+
   return (
-    <div
-      ref={ref}
-      className="flex gap-5 overflow-x-auto pb-4 cursor-grab active:cursor-grabbing scroll-smooth"
-      style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}
-      onMouseDown={(e) => { dragging.current = true; startX.current = e.pageX - (ref.current?.offsetLeft || 0); scrollL.current = ref.current?.scrollLeft || 0 }}
-      onMouseLeave={() => { dragging.current = false }}
-      onMouseUp={() => { dragging.current = false }}
-      onMouseMove={(e) => { if (!dragging.current || !ref.current) return; e.preventDefault(); const x = e.pageX - (ref.current.offsetLeft || 0); ref.current.scrollLeft = scrollL.current - (x - startX.current) }}
-    >
-      {images.map((img, i) => (
-        <div key={i} className="flex-shrink-0 w-[320px] lg:w-[440px] group select-none">
-          <div className="h-[220px] lg:h-[300px] overflow-hidden rounded-2xl"><img src={img.src} alt={img.label} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 pointer-events-none" /></div>
-          <p className="mt-3 text-[12px] font-medium tracking-wide text-[#0c1a30]/30">{img.label}</p>
+    <>
+      <div
+        ref={ref}
+        className="flex gap-5 overflow-x-auto pb-4 cursor-grab active:cursor-grabbing scroll-smooth"
+        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}
+        onMouseDown={(e) => { dragging.current = true; didDrag.current = false; startX.current = e.pageX - (ref.current?.offsetLeft || 0); scrollL.current = ref.current?.scrollLeft || 0 }}
+        onMouseLeave={() => { dragging.current = false }}
+        onMouseUp={() => { dragging.current = false }}
+        onMouseMove={(e) => { if (!dragging.current || !ref.current) return; didDrag.current = true; e.preventDefault(); const x = e.pageX - (ref.current.offsetLeft || 0); ref.current.scrollLeft = scrollL.current - (x - startX.current) }}
+      >
+        {images.map((img, i) => (
+          <div
+            key={i}
+            className="flex-shrink-0 w-[320px] lg:w-[440px] group select-none cursor-pointer"
+            onClick={() => { if (!didDrag.current) setLightbox(i) }}
+          >
+            <div className="h-[220px] lg:h-[300px] overflow-hidden rounded-2xl"><img src={img.src} alt={img.label} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 pointer-events-none" /></div>
+            <p className="mt-3 text-[12px] font-medium tracking-wide text-[#0c1a30]/30">{img.label}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Lightbox modal */}
+      {lightbox !== null && (
+        <div
+          className="fixed inset-0 z-[9999] bg-black/90 backdrop-blur-xl flex items-center justify-center"
+          onClick={() => setLightbox(null)}
+        >
+          {/* Close button */}
+          <button
+            className="absolute top-6 right-6 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+            onClick={() => setLightbox(null)}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+
+          {/* Previous */}
+          {lightbox > 0 && (
+            <button
+              className="absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+              onClick={(e) => { e.stopPropagation(); setLightbox(lightbox - 1) }}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+          )}
+
+          {/* Next */}
+          {lightbox < images.length - 1 && (
+            <button
+              className="absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+              onClick={(e) => { e.stopPropagation(); setLightbox(lightbox + 1) }}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          )}
+
+          {/* Image */}
+          <div className="max-w-[90vw] max-h-[85vh] px-4" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={images[lightbox].src}
+              alt={images[lightbox].label}
+              className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl"
+            />
+            <p className="text-center mt-4 text-white/60 text-sm font-medium">{images[lightbox].label}</p>
+          </div>
+
+          {/* Counter */}
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-white/30 text-xs tracking-widest">
+            {lightbox + 1} / {images.length}
+          </div>
         </div>
-      ))}
-    </div>
+      )}
+    </>
   )
 }
 
