@@ -436,14 +436,16 @@ function PartnerLogos({ lang }: { lang: Lang }) {
   )
 }
 
-// ─── 3D SATELLITE GLOBE ─────────────────────────────────
+// ─── 3D SATELLITE GLOBE (SpaceX-level) ──────────────────
 function SatelliteCoverageMap({ lang }: { lang: Lang }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const frameRef = useRef(0)
   const [stats, setStats] = useState({ sats: 0, coverage: 0 })
-  const mouseRef = useRef({ x: 0, y: 0, down: false })
-  const rotRef = useRef({ x: 0.3, y: 0 })
+  const mouseRef = useRef({ x: 0, y: 0, down: false, vx: 0, vy: 0 })
+  const rotRef = useRef({ x: 0.35, y: 0, tx: 0.35, ty: 0 })
+  const pulseRef = useRef<THREE.Mesh[]>([])
+  const arcDotsRef = useRef<any[]>([])
 
   // Animated counter on scroll
   useEffect(() => {
@@ -456,206 +458,356 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
     return () => clearInterval(t)
   }, [])
 
-  // Three.js 3D globe
+  // Helper: convert lat/lon to 3D vector on sphere
+  const latLonToVec3 = (lat: number, lon: number, radius: number): THREE.Vector3 => {
+    const phi = (90 - lat) * Math.PI / 180
+    const theta = (lon + 180) * Math.PI / 180
+    return new THREE.Vector3(
+      -radius * Math.sin(phi) * Math.cos(theta),
+      radius * Math.cos(phi),
+      radius * Math.sin(phi) * Math.sin(theta)
+    )
+  }
+
+  // Three.js 3D globe with NASA Earth at Night texture
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
-    // Scene setup
-    const scene = new THREE.Scene()
     const w = container.clientWidth
     const h = Math.min(w * 0.75, 600)
-    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000)
-    camera.position.z = 3.2
+    const scene = new THREE.Scene()
+    const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 10000)
+    camera.position.set(0, 0.3, 2.8)
+    camera.lookAt(0, 0, 0)
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
     renderer.setSize(w, h)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setClearColor(0x000000, 0)
+    renderer.toneMappingExposure = 1.0
     container.appendChild(renderer.domElement)
     rendererRef.current = renderer
 
-    // Globe group
     const globeGroup = new THREE.Group()
     scene.add(globeGroup)
 
-    // ── Earth sphere with dot matrix ──
-    const globeRadius = 1.0
-    const dotGeo = new THREE.BufferGeometry()
-    const dotPositions: number[] = []
-    const dotColors: number[] = []
-    const dotCount = 18000
-    // Create dots on sphere surface (land approximation via noise)
-    for (let i = 0; i < dotCount; i++) {
-      const phi = Math.acos(-1 + (2 * i) / dotCount)
-      const theta = Math.sqrt(dotCount * Math.PI) * phi
-      const x = globeRadius * Math.sin(phi) * Math.cos(theta)
-      const y = globeRadius * Math.cos(phi)
-      const z = globeRadius * Math.sin(phi) * Math.sin(theta)
-      // Simple land detection using sin/cos patterns (approximate continents)
-      const lat = 90 - (phi * 180 / Math.PI)
-      const lon = (theta * 180 / Math.PI) % 360 - 180
-      const isLand = checkLand(lat, lon)
-      if (isLand || Math.random() < 0.08) {
-        dotPositions.push(x, y, z)
-        if (isLand) {
-          dotColors.push(0.23, 0.51, 0.96) // blue for land
-        } else {
-          dotColors.push(0.1, 0.15, 0.3) // dark for ocean dots
-        }
-      }
+    // ════════════════════════════════════════════════════════════
+    // 1. STARFIELD (4000 tiny white dots)
+    // ════════════════════════════════════════════════════════════
+    const starfieldGeo = new THREE.SphereGeometry(400, 32, 32)
+    const starPositions: number[] = []
+    const indices: number[] = []
+    for (let i = 0; i < 4000; i++) {
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(Math.random() * 2 - 1)
+      const x = Math.sin(phi) * Math.cos(theta)
+      const y = Math.cos(phi)
+      const z = Math.sin(phi) * Math.sin(theta)
+      starPositions.push(x, y, z)
+      indices.push(i)
     }
-    dotGeo.setAttribute('position', new THREE.Float32BufferAttribute(dotPositions, 3))
-    dotGeo.setAttribute('color', new THREE.Float32BufferAttribute(dotColors, 3))
-    const dotMat = new THREE.PointsMaterial({ size: 0.012, vertexColors: true, transparent: true, opacity: 0.7, sizeAttenuation: true })
-    const dotMesh = new THREE.Points(dotGeo, dotMat)
-    globeGroup.add(dotMesh)
+    starfieldGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(starPositions), 3))
+    const starMat = new THREE.PointsMaterial({
+      size: 0.5,
+      sizeAttenuation: true,
+      transparent: true,
+      color: 0xffffff,
+      fog: false
+    })
+    const starfield = new THREE.Points(starfieldGeo, starMat)
+    scene.add(starfield)
 
-    // ── Atmosphere glow ──
-    const atmosGeo = new THREE.SphereGeometry(globeRadius * 1.15, 64, 64)
+    // ════════════════════════════════════════════════════════════
+    // 2. EARTH WITH NASA NIGHT TEXTURE
+    // ════════════════════════════════════════════════════════════
+    const textureLoader = new THREE.TextureLoader()
+    let earthTexture: THREE.Texture | null = null
+    textureLoader.load('/earth-night.jpg', (texture) => {
+      earthTexture = texture
+      earthTexture.magFilter = THREE.LinearFilter
+      earthTexture.minFilter = THREE.LinearFilter
+    })
+
+    const earthGeo = new THREE.SphereGeometry(1.0, 128, 128)
+    const earthMat = new THREE.MeshBasicMaterial({ map: earthTexture || new THREE.CanvasTexture(document.createElement('canvas')) })
+    const earthMesh = new THREE.Mesh(earthGeo, earthMat)
+    globeGroup.add(earthMesh)
+
+    // ════════════════════════════════════════════════════════════
+    // 3. ATMOSPHERIC GLOW (Blue rim light, BackSide, Additive)
+    // ════════════════════════════════════════════════════════════
+    const atmosGeo = new THREE.SphereGeometry(1.02, 64, 64)
     const atmosMat = new THREE.ShaderMaterial({
-      vertexShader: `varying vec3 vNormal; void main(){ vNormal = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-      fragmentShader: `varying vec3 vNormal; void main(){ float intensity = pow(0.65 - dot(vNormal, vec3(0,0,1.0)), 2.5); gl_FragColor = vec4(0.23, 0.51, 0.96, intensity * 0.4); }`,
-      blending: THREE.AdditiveBlending, side: THREE.BackSide, transparent: true
-    })
-    globeGroup.add(new THREE.Mesh(atmosGeo, atmosMat))
-
-    // ── Wireframe rings (latitude/longitude) ──
-    const ringMat = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.04 })
-    for (let i = 0; i < 12; i++) {
-      const ringGeo = new THREE.BufferGeometry()
-      const pts: THREE.Vector3[] = []
-      for (let j = 0; j <= 64; j++) {
-        const a = (j / 64) * Math.PI * 2
-        const lat = (i / 12) * Math.PI
-        pts.push(new THREE.Vector3(Math.sin(lat) * Math.cos(a) * globeRadius, Math.cos(lat) * globeRadius, Math.sin(lat) * Math.sin(a) * globeRadius))
-      }
-      ringGeo.setFromPoints(pts)
-      globeGroup.add(new THREE.Line(ringGeo, ringMat))
-    }
-    for (let i = 0; i < 24; i++) {
-      const ringGeo = new THREE.BufferGeometry()
-      const pts: THREE.Vector3[] = []
-      for (let j = 0; j <= 64; j++) {
-        const lat = (j / 64) * Math.PI
-        const lon = (i / 24) * Math.PI * 2
-        pts.push(new THREE.Vector3(Math.sin(lat) * Math.cos(lon) * globeRadius, Math.cos(lat) * globeRadius, Math.sin(lat) * Math.sin(lon) * globeRadius))
-      }
-      ringGeo.setFromPoints(pts)
-      globeGroup.add(new THREE.Line(ringGeo, ringMat))
-    }
-
-    // ── Satellite orbits ──
-    const constellations = [
-      { color: 0x3b82f6, radius: 1.18, speed: 0.4, inclination: 53, count: 40, orbits: 6 }, // Starlink
-      { color: 0x8b5cf6, radius: 1.30, speed: 0.25, inclination: 87, count: 16, orbits: 4 }, // OneWeb
-      { color: 0xf59e0b, radius: 1.55, speed: 0.02, inclination: 0, count: 6, orbits: 1 },   // Intelsat GEO
-    ]
-
-    const satMeshes: { mesh: THREE.Mesh; orbitRadius: number; speed: number; inclination: number; phase: number; orbitPhase: number; color: number }[] = []
-
-    constellations.forEach(c => {
-      for (let o = 0; o < c.orbits; o++) {
-        // Orbit ring
-        const orbitGeo = new THREE.BufferGeometry()
-        const orbitPts: THREE.Vector3[] = []
-        for (let j = 0; j <= 128; j++) {
-          const a = (j / 128) * Math.PI * 2
-          orbitPts.push(new THREE.Vector3(Math.cos(a) * c.radius, 0, Math.sin(a) * c.radius))
+      uniforms: {
+        glowColor: { value: new THREE.Color(0x3b82f6) },
+        intensity: { value: 0.6 }
+      },
+      vertexShader: `
+        varying vec3 vNormal;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
-        orbitGeo.setFromPoints(orbitPts)
-        const orbitLine = new THREE.Line(orbitGeo, new THREE.LineBasicMaterial({ color: c.color, transparent: true, opacity: 0.08 }))
-        // Rotate orbit by inclination and offset
-        orbitLine.rotation.x = (c.inclination * Math.PI / 180)
-        orbitLine.rotation.y = (o / c.orbits) * Math.PI * 2
-        globeGroup.add(orbitLine)
-
-        // Satellites on this orbit
-        const satsPerOrbit = Math.ceil(c.count / c.orbits)
-        for (let s = 0; s < satsPerOrbit; s++) {
-          const satGeo = new THREE.SphereGeometry(0.012, 8, 8)
-          const satMat = new THREE.MeshBasicMaterial({ color: c.color })
-          const sat = new THREE.Mesh(satGeo, satMat)
-          globeGroup.add(sat)
-          satMeshes.push({
-            mesh: sat, orbitRadius: c.radius, speed: c.speed,
-            inclination: c.inclination * Math.PI / 180,
-            phase: (s / satsPerOrbit) * Math.PI * 2,
-            orbitPhase: (o / c.orbits) * Math.PI * 2,
-            color: c.color
-          })
+      `,
+      fragmentShader: `
+        uniform vec3 glowColor;
+        uniform float intensity;
+        varying vec3 vNormal;
+        void main() {
+          float rim = pow(0.7 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.5);
+          gl_FragColor = vec4(glowColor, rim * intensity);
         }
-      }
+      `,
+      blending: THREE.AdditiveBlending,
+      side: THREE.BackSide,
+      transparent: true,
+      depthWrite: false
     })
+    const atmosMesh = new THREE.Mesh(atmosGeo, atmosMat)
+    globeGroup.add(atmosMesh)
 
-    // ── Airport hub points ──
+    // ════════════════════════════════════════════════════════════
+    // 4. SATELLITE CONSTELLATIONS
+    // ════════════════════════════════════════════════════════════
+    const starlinkDots: THREE.Mesh[] = []
+    const onewebDots: THREE.Mesh[] = []
+    const intelsatDots: THREE.Mesh[] = []
+
+    // Starlink: 72 planes, inclination 53°, altitude ~1.15 radius (6300+ sats → 200 dots)
+    const starlinkOrbitalPlanes = 72
+    const starlinkIncline = 53
+    const starlinkAltRatio = 1.15
+    const starlinkRepCount = 200
+    for (let i = 0; i < starlinkRepCount; i++) {
+      const plane = Math.floor(Math.random() * starlinkOrbitalPlanes)
+      const angle = Math.random() * Math.PI * 2
+      const inclination = starlinkIncline * Math.PI / 180
+      const planeRotation = (plane / starlinkOrbitalPlanes) * Math.PI * 2
+
+      const x = Math.cos(angle) * starlinkAltRatio
+      const z = Math.sin(angle) * starlinkAltRatio
+      const y = z * Math.sin(inclination)
+      const z2 = z * Math.cos(inclination)
+
+      const rotX = x * Math.cos(planeRotation) - z2 * Math.sin(planeRotation)
+      const rotZ = x * Math.sin(planeRotation) + z2 * Math.cos(planeRotation)
+
+      const satGeo = new THREE.SphereGeometry(0.015, 6, 6)
+      const satMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, emissive: 0x3b82f6, emissiveIntensity: 1.0 })
+      const sat = new THREE.Mesh(satGeo, satMat)
+      sat.position.set(rotX, y, rotZ)
+      globeGroup.add(sat)
+      starlinkDots.push(sat)
+    }
+
+    // OneWeb: 12 planes, inclination 87°, altitude 1.25 (648 sats → 50 dots)
+    const onewebOrbitalPlanes = 12
+    const onewebIncline = 87
+    const onewebAltRatio = 1.25
+    const onewebRepCount = 50
+    for (let i = 0; i < onewebRepCount; i++) {
+      const plane = Math.floor(Math.random() * onewebOrbitalPlanes)
+      const angle = Math.random() * Math.PI * 2
+      const inclination = onewebIncline * Math.PI / 180
+      const planeRotation = (plane / onewebOrbitalPlanes) * Math.PI * 2
+
+      const x = Math.cos(angle) * onewebAltRatio
+      const z = Math.sin(angle) * onewebAltRatio
+      const y = z * Math.sin(inclination)
+      const z2 = z * Math.cos(inclination)
+
+      const rotX = x * Math.cos(planeRotation) - z2 * Math.sin(planeRotation)
+      const rotZ = x * Math.sin(planeRotation) + z2 * Math.cos(planeRotation)
+
+      const satGeo = new THREE.SphereGeometry(0.012, 6, 6)
+      const satMat = new THREE.MeshBasicMaterial({ color: 0x8b5cf6, emissive: 0x8b5cf6, emissiveIntensity: 1.0 })
+      const sat = new THREE.Mesh(satGeo, satMat)
+      sat.position.set(rotX, y, rotZ)
+      globeGroup.add(sat)
+      onewebDots.push(sat)
+    }
+
+    // Intelsat GEO: 1 plane (equatorial), inclination 0°, altitude 1.5 (50+ sats → 20 dots)
+    const intelsatAltRatio = 1.5
+    const intelsatRepCount = 20
+    for (let i = 0; i < intelsatRepCount; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const x = Math.cos(angle) * intelsatAltRatio
+      const z = Math.sin(angle) * intelsatAltRatio
+
+      const satGeo = new THREE.SphereGeometry(0.014, 6, 6)
+      const satMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, emissive: 0xf59e0b, emissiveIntensity: 1.0 })
+      const sat = new THREE.Mesh(satGeo, satMat)
+      sat.position.set(x, 0, z)
+      globeGroup.add(sat)
+      intelsatDots.push(sat)
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 5. AIRPORT HUB BEACONS (bright green, pulsing)
+    // ════════════════════════════════════════════════════════════
     const hubs = [
-      [48.9, 2.3], [40.6, -73.8], [33.9, -118.4], [25.3, 55.4],
-      [1.4, 103.8], [35.5, 139.8], [-33.9, 151.2], [-22.9, -43.2], [-26.1, 28.2]
+      { lat: 48.9, lon: 2.3, name: 'CDG' },
+      { lat: 40.6, lon: -73.8, name: 'JFK' },
+      { lat: 33.9, lon: -118.4, name: 'LAX' },
+      { lat: 25.3, lon: 55.4, name: 'DXB' },
+      { lat: 1.4, lon: 103.8, name: 'SIN' },
+      { lat: 35.5, lon: 139.8, name: 'NRT' },
+      { lat: -33.9, lon: 151.2, name: 'SYD' },
     ]
-    hubs.forEach(([lat, lon]) => {
-      const phi = (90 - lat) * Math.PI / 180
-      const theta = (lon + 180) * Math.PI / 180
-      const x = globeRadius * 1.005 * Math.sin(phi) * Math.cos(theta)
-      const y = globeRadius * 1.005 * Math.cos(phi)
-      const z = -globeRadius * 1.005 * Math.sin(phi) * Math.sin(theta)
-      const hubGeo = new THREE.SphereGeometry(0.015, 8, 8)
-      const hubMat = new THREE.MeshBasicMaterial({ color: 0x34d399 })
-      const hub = new THREE.Mesh(hubGeo, hubMat)
-      hub.position.set(x, y, z)
-      globeGroup.add(hub)
-      // Pulse ring
-      const pulseGeo = new THREE.RingGeometry(0.015, 0.025, 16)
-      const pulseMat = new THREE.MeshBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.3, side: THREE.DoubleSide })
+
+    const hubMeshes: THREE.Mesh[] = []
+    const pulseRings: THREE.Mesh[] = []
+
+    hubs.forEach(hub => {
+      const pos = latLonToVec3(hub.lat, hub.lon, 1.008)
+
+      // Hub beacon
+      const hubGeo = new THREE.SphereGeometry(0.018, 12, 12)
+      const hubMat = new THREE.MeshBasicMaterial({ color: 0x34d399, emissive: 0x34d399, emissiveIntensity: 1.2 })
+      const hubMesh = new THREE.Mesh(hubGeo, hubMat)
+      hubMesh.position.copy(pos)
+      globeGroup.add(hubMesh)
+      hubMeshes.push(hubMesh)
+
+      // Pulse rings
+      const pulseGeo = new THREE.TorusGeometry(0.018, 0.003, 16, 16)
+      const pulseMat = new THREE.MeshBasicMaterial({ color: 0x34d399, transparent: true, emissive: 0x34d399 })
       const pulse = new THREE.Mesh(pulseGeo, pulseMat)
-      pulse.position.set(x, y, z)
+      pulse.position.copy(pos)
       pulse.lookAt(0, 0, 0)
       globeGroup.add(pulse)
+      pulseRings.push(pulse)
     })
+    pulseRef.current = pulseRings
 
-    // ── Mouse interaction ──
-    const onMouseDown = (e: MouseEvent) => { mouseRef.current = { x: e.clientX, y: e.clientY, down: true } }
-    const onMouseUp = () => { mouseRef.current.down = false }
+    // ════════════════════════════════════════════════════════════
+    // 6. CONNECTION ARCS BETWEEN HUBS (cyan with traveling dots)
+    // ════════════════════════════════════════════════════════════
+    const arcConnections = [
+      [0, 1], // CDG ↔ JFK
+      [0, 3], // CDG ↔ DXB
+      [1, 2], // JFK ↔ LAX
+      [3, 4], // DXB ↔ SIN
+      [4, 5], // SIN ↔ NRT
+      [5, 2], // NRT ↔ LAX
+      [0, 4]  // CDG ↔ SIN
+    ]
+
+    const arcDotsArrays: any[] = []
+
+    arcConnections.forEach(([i, j]) => {
+      const h1 = hubs[i]
+      const h2 = hubs[j]
+      const p1 = latLonToVec3(h1.lat, h1.lon, 1.008)
+      const p2 = latLonToVec3(h2.lat, h2.lon, 1.008)
+
+      // Curved arc with elevated midpoint
+      const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5)
+      const dist = p1.distanceTo(p2)
+      const elevation = mid.normalize().multiplyScalar(1.008 + dist / 3)
+      const curve = new THREE.QuadraticBezierCurve3(p1, elevation, p2)
+      const arcPoints = curve.getPoints(50)
+
+      // Arc line
+      const arcGeo = new THREE.BufferGeometry().setFromPoints(arcPoints)
+      const arcMat = new THREE.LineBasicMaterial({ color: 0x06b6d4, transparent: true, opacity: 0.5, fog: false })
+      const arcLine = new THREE.Line(arcGeo, arcMat)
+      globeGroup.add(arcLine)
+
+      // Animated traveling dots
+      const dotPositions: number[] = []
+      for (let k = 0; k < 8; k++) {
+        dotPositions.push(0, 0, 0)
+      }
+      const dotGeo = new THREE.BufferGeometry()
+      dotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(dotPositions), 3))
+      const dotMat = new THREE.PointsMaterial({ color: 0x06b6d4, size: 0.025, transparent: true, fog: false })
+      const dots = new THREE.Points(dotGeo, dotMat)
+      globeGroup.add(dots)
+
+      arcDotsArrays.push({ points: dots, arcPoints, positions: dotPositions, geo: dotGeo })
+    })
+    arcDotsRef.current = arcDotsArrays
+
+    // ════════════════════════════════════════════════════════════
+    // 7. MOUSE INTERACTION & INERTIA
+    // ════════════════════════════════════════════════════════════
+    const onMouseDown = (e: MouseEvent) => {
+      mouseRef.current = { x: e.clientX, y: e.clientY, down: true, vx: 0, vy: 0 }
+    }
+    const onMouseUp = () => {
+      mouseRef.current.down = false
+    }
     const onMouseMove = (e: MouseEvent) => {
       if (!mouseRef.current.down) return
       const dx = e.clientX - mouseRef.current.x
       const dy = e.clientY - mouseRef.current.y
-      rotRef.current.y += dx * 0.005
-      rotRef.current.x += dy * 0.005
-      rotRef.current.x = Math.max(-1.2, Math.min(1.2, rotRef.current.x))
+      mouseRef.current.vx = dx * 0.002
+      mouseRef.current.vy = dy * 0.002
+      rotRef.current.ty += mouseRef.current.vx
+      rotRef.current.tx += mouseRef.current.vy
+      rotRef.current.tx = Math.max(-Math.PI * 0.4, Math.min(Math.PI * 0.4, rotRef.current.tx))
       mouseRef.current.x = e.clientX
       mouseRef.current.y = e.clientY
     }
+
     renderer.domElement.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mouseup', onMouseUp)
     window.addEventListener('mousemove', onMouseMove)
     renderer.domElement.style.cursor = 'grab'
 
-    // ── Animate ──
+    // ════════════════════════════════════════════════════════════
+    // 8. ANIMATION LOOP
+    // ════════════════════════════════════════════════════════════
     let time = 0
     const animate = () => {
-      time += 0.005
-      // Auto-rotate + user rotation
-      if (!mouseRef.current.down) rotRef.current.y += 0.002
+      time += 0.0016
+
+      // Inertia decay
+      if (!mouseRef.current.down) {
+        mouseRef.current.vx *= 0.92
+        mouseRef.current.vy *= 0.92
+        rotRef.current.ty += mouseRef.current.vx
+        rotRef.current.tx += mouseRef.current.vy
+      }
+
+      // Auto-rotate when idle
+      if (!mouseRef.current.down && Math.abs(mouseRef.current.vx) < 0.0001) {
+        rotRef.current.ty += 0.0002
+      }
+
+      // Smooth interpolation
+      rotRef.current.x += (rotRef.current.tx - rotRef.current.x) * 0.1
+      rotRef.current.y += (rotRef.current.ty - rotRef.current.y) * 0.1
+
+      globeGroup.rotation.order = 'YXZ'
       globeGroup.rotation.y = rotRef.current.y
       globeGroup.rotation.x = rotRef.current.x
 
-      // Update satellite positions
-      satMeshes.forEach(s => {
-        const angle = s.phase + time * s.speed * 10
-        const x = Math.cos(angle) * s.orbitRadius
-        const z = Math.sin(angle) * s.orbitRadius
-        // Apply inclination and orbit offset rotation
-        const cosI = Math.cos(s.inclination)
-        const sinI = Math.sin(s.inclination)
-        const cosO = Math.cos(s.orbitPhase)
-        const sinO = Math.sin(s.orbitPhase)
-        // Rotate by inclination around X, then by orbitPhase around Y
-        const y1 = z * sinI
-        const z1 = z * cosI
-        const x2 = x * cosO - z1 * sinO
-        const z2 = x * sinO + z1 * cosO
-        s.mesh.position.set(x2, y1, z2)
+      // Update pulse rings
+      pulseRef.current.forEach(pulse => {
+        const scale = 1.0 + Math.sin(time * 5) * 0.3
+        pulse.scale.set(scale, scale, scale)
+        pulse.material.opacity = Math.max(0, 0.6 - Math.sin(time * 5) * 0.3)
+      })
+
+      // Update arc dots
+      arcDotsRef.current.forEach(arc => {
+        const positions = arc.positions || []
+        const arcPoints = arc.arcPoints
+        for (let k = 0; k < 8; k++) {
+          const t = (time * 0.5 + k * 0.125) % 1
+          const idx = Math.floor(t * (arcPoints.length - 1))
+          const p = arcPoints[idx]
+          positions[k * 3] = p.x
+          positions[k * 3 + 1] = p.y
+          positions[k * 3 + 2] = p.z
+        }
+        if (arc.geo) {
+          arc.geo.attributes.position.needsUpdate = true
+        }
       })
 
       renderer.render(scene, camera)
@@ -663,7 +815,9 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
     }
     frameRef.current = requestAnimationFrame(animate)
 
-    // ── Resize ──
+    // ════════════════════════════════════════════════════════════
+    // 9. RESIZE HANDLER
+    // ════════════════════════════════════════════════════════════
     const onResize = () => {
       const nw = container.clientWidth
       const nh = Math.min(nw * 0.75, 600)
@@ -678,8 +832,12 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
       window.removeEventListener('resize', onResize)
       window.removeEventListener('mouseup', onMouseUp)
       window.removeEventListener('mousemove', onMouseMove)
+      renderer.domElement.removeEventListener('mousedown', onMouseDown)
       renderer.dispose()
-      if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement)
+      if (earthTexture) earthTexture.dispose()
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement)
+      }
     }
   }, [])
 
@@ -760,34 +918,6 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
       </div>
     </section>
   )
-}
-
-// Approximate land detection by lat/lon (simple bounding boxes for continents)
-function checkLand(lat: number, lon: number): boolean {
-  // Europe
-  if (lat > 35 && lat < 72 && lon > -12 && lon < 45) return true
-  // Africa
-  if (lat > -35 && lat < 37 && lon > -20 && lon < 52) {
-    if (lat < 5 && lon > 42) return false // Horn trimming
-    return true
-  }
-  // Asia
-  if (lat > 5 && lat < 75 && lon > 45 && lon < 150) return true
-  // India
-  if (lat > 8 && lat < 35 && lon > 68 && lon < 90) return true
-  // North America
-  if (lat > 15 && lat < 72 && lon > -170 && lon < -50) return true
-  // South America
-  if (lat > -56 && lat < 13 && lon > -82 && lon < -34) return true
-  // Australia
-  if (lat > -45 && lat < -10 && lon > 112 && lon < 155) return true
-  // Japan/Korea
-  if (lat > 30 && lat < 46 && lon > 128 && lon < 146) return true
-  // Indonesia/SEA
-  if (lat > -10 && lat < 8 && lon > 95 && lon < 140) return true
-  // UK/Ireland
-  if (lat > 50 && lat < 60 && lon > -11 && lon < 2) return true
-  return false
 }
 
 // ─── TEXT SCRAMBLE ───────────────────────────────────────
@@ -1001,8 +1131,35 @@ function PageTransition({ children, pageKey }: { children: ReactNode; pageKey: s
 }
 
 // ─── CONTACT MODAL ──────────────────────────────────────
-function ContactModal({ open, onClose, lang }: { open: boolean; onClose: () => void; lang: Lang }) {
+type ContactMode = 'demo' | 'contact' | 'expert' | 'newsletter'
+function ContactModal({ open, onClose, lang, mode = 'demo' }: { open: boolean; onClose: () => void; lang: Lang; mode?: ContactMode }) {
   if (!open) return null
+
+  const modalConfig: Record<ContactMode, { title: string; subtitle: string; fields: string[] }> = {
+    demo: {
+      title: lang === 'fr' ? 'Demander une démo' : 'Request a Demo',
+      subtitle: lang === 'fr' ? 'Notre équipe vous contactera sous 24h.' : 'Our team will contact you within 24h.',
+      fields: ['name', 'email', 'segment', 'message']
+    },
+    contact: {
+      title: lang === 'fr' ? 'Nous contacter' : 'Contact Us',
+      subtitle: lang === 'fr' ? 'Contactez-nous pour toute question.' : 'Contact us with any questions.',
+      fields: ['name', 'email', 'message']
+    },
+    expert: {
+      title: lang === 'fr' ? 'Parler à un expert' : 'Talk to an Expert',
+      subtitle: lang === 'fr' ? 'Nos experts sont à votre écoute.' : 'Our experts are here to help.',
+      fields: ['name', 'email', 'company', 'phone']
+    },
+    newsletter: {
+      title: lang === 'fr' ? 'Newsletter' : 'Newsletter',
+      subtitle: lang === 'fr' ? 'Restez informé des dernières actualités.' : 'Stay updated with the latest news.',
+      fields: ['email']
+    }
+  }
+
+  const config = modalConfig[mode]
+
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
@@ -1010,18 +1167,32 @@ function ContactModal({ open, onClose, lang }: { open: boolean; onClose: () => v
         <button onClick={onClose} className="absolute top-5 right-5 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
         </button>
-        <h3 className="font-display text-[28px] font-bold text-[#0c1a30] mb-2">{lang === 'fr' ? 'Demander une démo' : 'Request a Demo'}</h3>
-        <p className="text-[14px] text-[#0c1a30]/40 mb-8">{lang === 'fr' ? 'Notre équipe vous contactera sous 24h.' : 'Our team will contact you within 24h.'}</p>
+        <h3 className="font-display text-[28px] font-bold text-[#0c1a30] mb-2">{config.title}</h3>
+        <p className="text-[14px] text-[#0c1a30]/40 mb-8">{config.subtitle}</p>
         <div className="space-y-4">
-          <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">{lang === 'fr' ? 'Nom complet' : 'Full name'}</label><input type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all" placeholder="John Doe" /></div>
-          <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">Email</label><input type="email" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all" placeholder="john@company.com" /></div>
-          <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">{lang === 'fr' ? 'Secteur' : 'Segment'}</label>
-            <select className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] text-[#0c1a30]/60 focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all bg-white">
-              <option>Aviation (Jets / VIP)</option><option>{lang === 'fr' ? 'Méga-Yachts' : 'Mega-Yachts'}</option><option>{lang === 'fr' ? 'Croisières' : 'Cruise Lines'}</option><option>{lang === 'fr' ? 'Maritime Marchand' : 'Merchant Maritime'}</option><option>{lang === 'fr' ? 'Compagnies aériennes' : 'Airlines'}</option>
-            </select>
-          </div>
-          <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">Message</label><textarea className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all resize-none" rows={3} placeholder={lang === 'fr' ? 'Décrivez votre projet...' : 'Describe your project...'} /></div>
-          <button className="w-full py-3.5 bg-[#0c1a30] text-white text-[14px] font-semibold rounded-xl hover:bg-[#162238] transition-all active:scale-[0.98] mt-2">{lang === 'fr' ? 'Envoyer la demande' : 'Send Request'}</button>
+          {config.fields.includes('name') && (
+            <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">{lang === 'fr' ? 'Nom complet' : 'Full name'}</label><input type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all" placeholder="John Doe" /></div>
+          )}
+          {config.fields.includes('email') && (
+            <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">Email</label><input type="email" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all" placeholder="john@company.com" /></div>
+          )}
+          {config.fields.includes('company') && (
+            <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">{lang === 'fr' ? 'Entreprise' : 'Company'}</label><input type="text" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all" placeholder={lang === 'fr' ? 'Votre entreprise' : 'Your company'} /></div>
+          )}
+          {config.fields.includes('phone') && (
+            <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">{lang === 'fr' ? 'Téléphone' : 'Phone'}</label><input type="tel" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all" placeholder="+33 1 23 45 67 89" /></div>
+          )}
+          {config.fields.includes('segment') && (
+            <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">{lang === 'fr' ? 'Secteur' : 'Segment'}</label>
+              <select className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] text-[#0c1a30]/60 focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all bg-white">
+                <option>Aviation (Jets / VIP)</option><option>{lang === 'fr' ? 'Méga-Yachts' : 'Mega-Yachts'}</option><option>{lang === 'fr' ? 'Croisières' : 'Cruise Lines'}</option><option>{lang === 'fr' ? 'Maritime Marchand' : 'Merchant Maritime'}</option><option>{lang === 'fr' ? 'Compagnies aériennes' : 'Airlines'}</option>
+              </select>
+            </div>
+          )}
+          {config.fields.includes('message') && (
+            <div><label className="block text-[12px] font-semibold text-[#0c1a30]/50 mb-1.5 tracking-wide uppercase">{lang === 'fr' ? 'Message' : 'Message'}</label><textarea className="w-full px-4 py-3 rounded-xl border border-gray-200 text-[14px] focus:outline-none focus:border-[#0c1a30]/30 focus:ring-2 focus:ring-[#0c1a30]/5 transition-all resize-none" rows={3} placeholder={lang === 'fr' ? 'Décrivez votre projet...' : 'Describe your project...'} /></div>
+          )}
+          <button className="w-full py-3.5 bg-[#0c1a30] text-white text-[14px] font-semibold rounded-xl hover:bg-[#162238] transition-all active:scale-[0.98] mt-2">{lang === 'fr' ? 'Envoyer' : 'Send'}</button>
         </div>
       </div>
     </div>
@@ -1044,7 +1215,7 @@ const T = {
 
 // ─── NAV ────────────────────────────────────────────────
 const NAV_IDS = ['home', 'aviation', 'yachts', 'cruise', 'maritime'] as const
-function Navbar({ currentPage, setPage, lang, setLang, onContact }: { currentPage: string; setPage: (p: string) => void; lang: Lang; setLang: (l: Lang) => void; onContact: () => void }) {
+function Navbar({ currentPage, setPage, lang, setLang, onContact }: { currentPage: string; setPage: (p: string) => void; lang: Lang; setLang: (l: Lang) => void; onContact: (mode?: ContactMode) => void }) {
   const [scrolled, setScrolled] = useState(false); const [menuOpen, setMenuOpen] = useState(false); const isDark = currentPage !== 'home'
   useEffect(() => { const h = () => setScrolled(window.scrollY > 40); window.addEventListener('scroll', h, { passive: true }); return () => window.removeEventListener('scroll', h) }, [])
   return (
@@ -1056,7 +1227,7 @@ function Navbar({ currentPage, setPage, lang, setLang, onContact }: { currentPag
         </div>
         <div className="hidden md:flex items-center gap-3">
           <button onClick={() => setLang(lang === 'fr' ? 'en' : 'fr')} className={`px-3 py-1.5 text-[11px] font-bold tracking-wider rounded-full border transition-all ${isDark ? 'border-white/15 text-white/50 hover:text-white hover:border-white/30' : 'border-[#0c1a30]/10 text-[#0c1a30]/40 hover:text-[#0c1a30]'}`}>{lang === 'fr' ? 'EN' : 'FR'}</button>
-          <button onClick={onContact} className={`px-5 py-2.5 text-[13px] font-semibold rounded-full transition-all duration-300 hover:shadow-lg active:scale-[0.97] ${isDark ? 'bg-white text-[#0c1a30] hover:shadow-white/10' : 'bg-[#0c1a30] text-white hover:shadow-[#0c1a30]/20'}`}>{T.nav.contact[lang]}</button>
+          <button onClick={() => onContact('contact')} className={`px-5 py-2.5 text-[13px] font-semibold rounded-full transition-all duration-300 hover:shadow-lg active:scale-[0.97] ${isDark ? 'bg-white text-[#0c1a30] hover:shadow-white/10' : 'bg-[#0c1a30] text-white hover:shadow-[#0c1a30]/20'}`}>{T.nav.contact[lang]}</button>
         </div>
         <div className="md:hidden flex items-center gap-3">
           <button onClick={() => setLang(lang === 'fr' ? 'en' : 'fr')} className={`px-2 py-1 text-[11px] font-bold rounded-full border ${isDark ? 'border-white/15 text-white/50' : 'border-[#0c1a30]/10 text-[#0c1a30]/40'}`}>{lang === 'fr' ? 'EN' : 'FR'}</button>
@@ -1066,7 +1237,7 @@ function Navbar({ currentPage, setPage, lang, setLang, onContact }: { currentPag
       <div className={`md:hidden overflow-hidden transition-all duration-400 ${menuOpen ? 'max-h-[400px] opacity-100' : 'max-h-0 opacity-0'}`}>
         <div className={`${isDark ? 'glass-dark' : 'glass'} border-t ${isDark ? 'border-white/10' : 'border-black/5'} px-6 py-4`}>
           {NAV_IDS.map(id => <button key={id} onClick={() => { setPage(id); setMenuOpen(false); window.scrollTo({ top: 0 }) }} className={`block w-full text-left py-3 text-[15px] font-medium transition-colors ${currentPage === id ? (isDark ? 'text-white' : 'text-[#0c1a30]') : (isDark ? 'text-white/50' : 'text-[#0c1a30]/40')}`}>{T.nav[id as keyof typeof T.nav][lang]}</button>)}
-          <button onClick={() => { onContact(); setMenuOpen(false) }} className="mt-2 w-full py-3 bg-[#0c1a30] text-white text-[14px] font-semibold rounded-xl">{T.nav.contact[lang]}</button>
+          <button onClick={() => { onContact('contact'); setMenuOpen(false) }} className="mt-2 w-full py-3 bg-[#0c1a30] text-white text-[14px] font-semibold rounded-xl">{T.nav.contact[lang]}</button>
         </div>
       </div>
     </nav>
@@ -1146,7 +1317,7 @@ function TrustSection({ lang }: { lang: Lang }) {
 }
 
 // ─── FOOTER ─────────────────────────────────────────────
-function Footer({ setPage, lang, onContact }: { setPage: (p: string) => void; lang: Lang; onContact: () => void }) {
+function Footer({ setPage, lang, onContact }: { setPage: (p: string) => void; lang: Lang; onContact: (mode?: ContactMode) => void }) {
   return (
     <footer className="bg-[#0c1a30] text-white relative overflow-hidden">
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-blue-500/5 rounded-full blur-[120px]" />
@@ -1157,7 +1328,7 @@ function Footer({ setPage, lang, onContact }: { setPage: (p: string) => void; la
           <p className="text-[14px] text-white/30 mb-8 max-w-[400px] mx-auto">{lang === 'fr' ? 'Recevez nos actualités produit et innovations dans votre boîte mail.' : 'Get product news and innovations delivered to your inbox.'}</p>
           <div className="flex max-w-[440px] mx-auto gap-3">
             <input type="email" placeholder={lang === 'fr' ? 'Votre adresse email' : 'Your email address'} className="flex-1 px-5 py-3 rounded-xl bg-white/[0.06] border border-white/[0.08] text-[14px] text-white placeholder-white/25 focus:outline-none focus:border-white/20 transition-all" />
-            <MagneticButton onClick={onContact} className="px-6 py-3 bg-white text-[#0c1a30] text-[13px] font-semibold rounded-xl hover:shadow-lg hover:shadow-white/10 transition-all active:scale-[0.97]">{lang === 'fr' ? "S'inscrire" : 'Subscribe'}</MagneticButton>
+            <MagneticButton onClick={() => onContact('newsletter')} className="px-6 py-3 bg-white text-[#0c1a30] text-[13px] font-semibold rounded-xl hover:shadow-lg hover:shadow-white/10 transition-all active:scale-[0.97]">{lang === 'fr' ? "S'inscrire" : 'Subscribe'}</MagneticButton>
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-16">
@@ -1198,7 +1369,7 @@ const PKGS = [
 ]
 
 // ─── HOME PAGE ──────────────────────────────────────────
-function HomePage({ setPage, lang, onContact }: { setPage: (p: string) => void; lang: Lang; onContact: () => void }) {
+function HomePage({ setPage, lang, onContact }: { setPage: (p: string) => void; lang: Lang; onContact: (mode?: ContactMode) => void }) {
   const segments = [
     { id: 'aviation', title: lang === 'fr' ? 'Jets & VIP' : 'Jets & VIP', sub: lang === 'fr' ? "Contenu favori en vol, coût internet réduit drastiquement." : 'Favourite content in-flight, internet cost drastically reduced.', img: IMG.vip },
     { id: 'yachts', title: lang === 'fr' ? 'Méga-Yachts' : 'Mega-Yachts', sub: lang === 'fr' ? "TV nationale fiable en pleine mer pour les décideurs." : 'Reliable national TV at sea for decision-makers.', img: IMG.yacht },
@@ -1227,7 +1398,7 @@ function HomePage({ setPage, lang, onContact }: { setPage: (p: string) => void; 
             <Reveal delay={360}>
               <div className="flex flex-wrap gap-4">
                 <MagneticButton onClick={() => document.getElementById('segments')?.scrollIntoView({ behavior: 'smooth' })} className="group px-8 py-3.5 bg-[#0c1a30] text-white text-[14px] font-semibold rounded-full hover:bg-[#162238] hover:shadow-xl hover:shadow-[#0c1a30]/15 transition-all active:scale-[0.97]">{T.home.cta1[lang]}<span className="inline-block ml-2 group-hover:translate-x-1 transition-transform">&rarr;</span></MagneticButton>
-                <MagneticButton onClick={onContact} className="px-8 py-3.5 text-[14px] font-semibold text-[#0c1a30]/60 hover:text-[#0c1a30] rounded-full border border-[#0c1a30]/10 hover:border-[#0c1a30]/20 hover:bg-white/60 transition-all">{T.home.cta2[lang]}</MagneticButton>
+                <MagneticButton onClick={() => onContact('demo')} className="px-8 py-3.5 text-[14px] font-semibold text-[#0c1a30]/60 hover:text-[#0c1a30] rounded-full border border-[#0c1a30]/10 hover:border-[#0c1a30]/20 hover:bg-white/60 transition-all">{T.home.cta2[lang]}</MagneticButton>
               </div>
             </Reveal>
           </div>
@@ -1566,8 +1737,8 @@ function HomePage({ setPage, lang, onContact }: { setPage: (p: string) => void; 
                 <h2 className="font-display text-[clamp(28px,4vw,48px)] font-bold text-white tracking-tight leading-[1.15] mb-5">{lang === 'fr' ? 'Prêt à transformer votre expérience à bord ?' : 'Ready to transform your onboard experience?'}</h2>
                 <p className="text-[17px] text-white/40 max-w-[500px] mx-auto mb-10">{lang === 'fr' ? "Découvrez comment Airmont optimise le streaming pour les environnements les plus exigeants." : 'Discover how Airmont optimizes streaming for the most demanding environments.'}</p>
                 <div className="flex flex-wrap justify-center gap-4">
-                  <MagneticButton onClick={onContact} className="group/btn px-8 py-3.5 bg-white text-[#0c1a30] text-[14px] font-semibold rounded-full hover:shadow-xl hover:shadow-white/15 transition-all active:scale-[0.97]">{lang === 'fr' ? 'Demander une démo' : 'Request a Demo'}<span className="inline-block ml-2 group-hover/btn:translate-x-1 transition-transform">&rarr;</span></MagneticButton>
-                  <MagneticButton onClick={onContact} className="px-8 py-3.5 text-[14px] font-semibold text-white/50 hover:text-white rounded-full border border-white/15 hover:border-white/30 transition-all">{lang === 'fr' ? 'Parler à un expert' : 'Talk to an Expert'}</MagneticButton>
+                  <MagneticButton onClick={() => onContact('demo')} className="group/btn px-8 py-3.5 bg-white text-[#0c1a30] text-[14px] font-semibold rounded-full hover:shadow-xl hover:shadow-white/15 transition-all active:scale-[0.97]">{lang === 'fr' ? 'Demander une démo' : 'Request a Demo'}<span className="inline-block ml-2 group-hover/btn:translate-x-1 transition-transform">&rarr;</span></MagneticButton>
+                  <MagneticButton onClick={() => onContact('expert')} className="px-8 py-3.5 text-[14px] font-semibold text-white/50 hover:text-white rounded-full border border-white/15 hover:border-white/30 transition-all">{lang === 'fr' ? 'Parler à un expert' : 'Talk to an Expert'}</MagneticButton>
                 </div>
               </div>
             </div>
@@ -1646,7 +1817,7 @@ const SEGS: Record<string, SegData> = {
 }
 
 // ─── SEGMENT PAGE ───────────────────────────────────────
-function SegmentPage({ data, lang, onContact }: { data: SegData; lang: Lang; onContact: () => void }) {
+function SegmentPage({ data, lang, onContact }: { data: SegData; lang: Lang; onContact: (mode?: ContactMode) => void }) {
   return (
     <div>
       <section className="relative min-h-[90vh] flex items-end overflow-hidden">
@@ -1660,7 +1831,7 @@ function SegmentPage({ data, lang, onContact }: { data: SegData; lang: Lang; onC
             <Reveal delay={240}><p className="text-[17px] lg:text-[19px] leading-relaxed text-white/50 max-w-[500px] mb-10">{data.sub[lang]}</p></Reveal>
             <Reveal delay={360}>
               <div className="flex flex-wrap gap-4">
-                <MagneticButton onClick={onContact} className="group px-8 py-3.5 bg-white text-[#0c1a30] text-[14px] font-semibold rounded-full hover:shadow-xl transition-all active:scale-[0.97]">{T.seg.demo[lang]}<span className="inline-block ml-2 group-hover:translate-x-1 transition-transform">&rarr;</span></MagneticButton>
+                <MagneticButton onClick={() => onContact('demo')} className="group px-8 py-3.5 bg-white text-[#0c1a30] text-[14px] font-semibold rounded-full hover:shadow-xl transition-all active:scale-[0.97]">{T.seg.demo[lang]}<span className="inline-block ml-2 group-hover:translate-x-1 transition-transform">&rarr;</span></MagneticButton>
                 <MagneticButton onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })} className="px-8 py-3.5 text-[14px] font-semibold text-white/50 hover:text-white rounded-full border border-white/12 hover:border-white/30 transition-all">{T.seg.specs[lang]}</MagneticButton>
               </div>
             </Reveal>
@@ -1708,7 +1879,7 @@ function SegmentPage({ data, lang, onContact }: { data: SegData; lang: Lang; onC
             <div className="relative z-10 text-center px-6 py-16">
               <h2 className="font-display text-[clamp(28px,4vw,44px)] font-bold text-white tracking-tight mb-5">{T.seg.ctaH2[lang]}</h2>
               <p className="text-[16px] text-white/35 mb-10">{T.seg.ctaSub[lang]} {data.name[lang].toLowerCase()}.</p>
-              <MagneticButton onClick={onContact} className="group/b px-8 py-3.5 bg-white text-[#0c1a30] text-[14px] font-semibold rounded-full hover:shadow-xl hover:shadow-white/15 transition-all active:scale-[0.97]">{T.seg.ctaBtn[lang]}<span className="inline-block ml-2 group-hover/b:translate-x-1 transition-transform">&rarr;</span></MagneticButton>
+              <MagneticButton onClick={() => onContact('contact')} className="group/b px-8 py-3.5 bg-white text-[#0c1a30] text-[14px] font-semibold rounded-full hover:shadow-xl hover:shadow-white/15 transition-all active:scale-[0.97]">{T.seg.ctaBtn[lang]}<span className="inline-block ml-2 group-hover/b:translate-x-1 transition-transform">&rarr;</span></MagneticButton>
             </div>
           </div></Reveal>
         </div>
@@ -1722,25 +1893,31 @@ function App() {
   const [page, setPage] = useState('home')
   const [lang, setLang] = useState<Lang>('fr')
   const [contactOpen, setContactOpen] = useState(false)
+  const [contactMode, setContactMode] = useState<ContactMode>('demo')
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior }) }, [page])
 
+  const openContact = (mode: ContactMode = 'demo') => {
+    setContactMode(mode)
+    setContactOpen(true)
+  }
+
   const content = page === 'home'
-    ? <HomePage setPage={setPage} lang={lang} onContact={() => setContactOpen(true)} />
+    ? <HomePage setPage={setPage} lang={lang} onContact={openContact} />
     : SEGS[page]
-      ? <SegmentPage data={SEGS[page]} lang={lang} onContact={() => setContactOpen(true)} />
-      : <HomePage setPage={setPage} lang={lang} onContact={() => setContactOpen(true)} />
+      ? <SegmentPage data={SEGS[page]} lang={lang} onContact={openContact} />
+      : <HomePage setPage={setPage} lang={lang} onContact={openContact} />
 
   return (
     <div className="min-h-screen">
       {!loaded && <Preloader onDone={() => setLoaded(true)} />}
       <ScrollProgress />
       <CursorGlow />
-      <Navbar currentPage={page} setPage={setPage} lang={lang} setLang={setLang} onContact={() => setContactOpen(true)} />
+      <Navbar currentPage={page} setPage={setPage} lang={lang} setLang={setLang} onContact={openContact} />
       <main><PageTransition pageKey={page}>{content}</PageTransition></main>
-      <Footer setPage={setPage} lang={lang} onContact={() => setContactOpen(true)} />
-      <ContactModal open={contactOpen} onClose={() => setContactOpen(false)} lang={lang} />
+      <Footer setPage={setPage} lang={lang} onContact={openContact} />
+      <ContactModal open={contactOpen} onClose={() => setContactOpen(false)} lang={lang} mode={contactMode} />
       {loaded && <LiveToasts lang={lang} />}
     </div>
   )
