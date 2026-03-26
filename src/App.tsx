@@ -594,6 +594,7 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
                 opacity: globeReady ? 1 : 0,
                 width: globeSize,
                 height: globeSize,
+                overflow: 'hidden',
               }}
             >
               {/* Globe rendered 2x larger, centered, canvas edges far outside visible area */}
