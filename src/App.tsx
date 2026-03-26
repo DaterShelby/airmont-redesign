@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ReactNode, useCallback, useMemo } from 'react'
-import * as THREE from 'three'
+import createGlobe from 'cobe'
 import IMG from './images'
 
 // ─── CINEMATIC PRELOADER ─────────────────────────────────
@@ -436,415 +436,97 @@ function PartnerLogos({ lang }: { lang: Lang }) {
   )
 }
 
-// ─── 3D SATELLITE GLOBE (SpaceX-level) ──────────────────
+// ─── SATELLITE GLOBE (COBE) ─────────────────────────────
 function SatelliteCoverageMap({ lang }: { lang: Lang }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
-  const frameRef = useRef(0)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const pointerInteracting = useRef<number | null>(null)
+  const pointerInteractionMovement = useRef(0)
+  const phiRef = useRef(0)
   const [stats, setStats] = useState({ sats: 0, coverage: 0 })
-  const mouseRef = useRef({ x: 0, y: 0, down: false, vx: 0, vy: 0 })
-  const rotRef = useRef({ x: 0.35, y: 0, tx: 0.35, ty: 0 })
-  const pulseRef = useRef<THREE.Mesh[]>([])
-  const arcDotsRef = useRef<any[]>([])
+  const widthRef = useRef(0)
 
-  // Animated counter on scroll
+  // Animated counter
   useEffect(() => {
     let f = 0
     const t = setInterval(() => {
       f++
-      setStats({ sats: Math.min(Math.round(f * 12), 7200), coverage: Math.min(Math.round(f * 0.5), 98) })
+      setStats({ sats: Math.min(Math.round(f * 36), 7200), coverage: Math.min(Math.round(f * 0.5), 98) })
       if (f >= 200) clearInterval(t)
     }, 16)
     return () => clearInterval(t)
   }, [])
 
-  // Helper: convert lat/lon to 3D vector on sphere
-  const latLonToVec3 = (lat: number, lon: number, radius: number): THREE.Vector3 => {
-    const phi = (90 - lat) * Math.PI / 180
-    const theta = (lon + 180) * Math.PI / 180
-    return new THREE.Vector3(
-      -radius * Math.sin(phi) * Math.cos(theta),
-      radius * Math.cos(phi),
-      radius * Math.sin(phi) * Math.sin(theta)
-    )
-  }
-
-  // Three.js 3D globe with NASA Earth at Night texture
+  // COBE globe
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
+    let currentPhi = 0
+    let currentTheta = 0.3
+    const doublePi = Math.PI * 2
 
-    const w = container.clientWidth
-    const h = Math.min(w * 0.75, 600)
-    const scene = new THREE.Scene()
-    const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 10000)
-    camera.position.set(0, 0.3, 2.8)
-    camera.lookAt(0, 0, 0)
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
-    renderer.setSize(w, h)
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-    renderer.setClearColor(0x000000, 0)
-    renderer.toneMappingExposure = 1.0
-    container.appendChild(renderer.domElement)
-    rendererRef.current = renderer
-
-    const globeGroup = new THREE.Group()
-    scene.add(globeGroup)
-
-    // ════════════════════════════════════════════════════════════
-    // 1. STARFIELD (4000 tiny white dots)
-    // ════════════════════════════════════════════════════════════
-    const starfieldGeo = new THREE.SphereGeometry(400, 32, 32)
-    const starPositions: number[] = []
-    const indices: number[] = []
-    for (let i = 0; i < 4000; i++) {
-      const theta = Math.random() * Math.PI * 2
-      const phi = Math.acos(Math.random() * 2 - 1)
-      const x = Math.sin(phi) * Math.cos(theta)
-      const y = Math.cos(phi)
-      const z = Math.sin(phi) * Math.sin(theta)
-      starPositions.push(x, y, z)
-      indices.push(i)
-    }
-    starfieldGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(starPositions), 3))
-    const starMat = new THREE.PointsMaterial({
-      size: 0.5,
-      sizeAttenuation: true,
-      transparent: true,
-      color: 0xffffff,
-      fog: false
-    })
-    const starfield = new THREE.Points(starfieldGeo, starMat)
-    scene.add(starfield)
-
-    // ════════════════════════════════════════════════════════════
-    // 2. EARTH WITH NASA NIGHT TEXTURE
-    // ════════════════════════════════════════════════════════════
-    const textureLoader = new THREE.TextureLoader()
-    let earthTexture: THREE.Texture | null = null
-    textureLoader.load('/earth-night.jpg', (texture) => {
-      earthTexture = texture
-      earthTexture.magFilter = THREE.LinearFilter
-      earthTexture.minFilter = THREE.LinearFilter
-    })
-
-    const earthGeo = new THREE.SphereGeometry(1.0, 128, 128)
-    const earthMat = new THREE.MeshBasicMaterial({ map: earthTexture || new THREE.CanvasTexture(document.createElement('canvas')) })
-    const earthMesh = new THREE.Mesh(earthGeo, earthMat)
-    globeGroup.add(earthMesh)
-
-    // ════════════════════════════════════════════════════════════
-    // 3. ATMOSPHERIC GLOW (Blue rim light, BackSide, Additive)
-    // ════════════════════════════════════════════════════════════
-    const atmosGeo = new THREE.SphereGeometry(1.02, 64, 64)
-    const atmosMat = new THREE.ShaderMaterial({
-      uniforms: {
-        glowColor: { value: new THREE.Color(0x3b82f6) },
-        intensity: { value: 0.6 }
-      },
-      vertexShader: `
-        varying vec3 vNormal;
-        void main() {
-          vNormal = normalize(normalMatrix * normal);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform vec3 glowColor;
-        uniform float intensity;
-        varying vec3 vNormal;
-        void main() {
-          float rim = pow(0.7 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.5);
-          gl_FragColor = vec4(glowColor, rim * intensity);
-        }
-      `,
-      blending: THREE.AdditiveBlending,
-      side: THREE.BackSide,
-      transparent: true,
-      depthWrite: false
-    })
-    const atmosMesh = new THREE.Mesh(atmosGeo, atmosMat)
-    globeGroup.add(atmosMesh)
-
-    // ════════════════════════════════════════════════════════════
-    // 4. SATELLITE CONSTELLATIONS
-    // ════════════════════════════════════════════════════════════
-    const starlinkDots: THREE.Mesh[] = []
-    const onewebDots: THREE.Mesh[] = []
-    const intelsatDots: THREE.Mesh[] = []
-
-    // Starlink: 72 planes, inclination 53°, altitude ~1.15 radius (6300+ sats → 200 dots)
-    const starlinkOrbitalPlanes = 72
-    const starlinkIncline = 53
-    const starlinkAltRatio = 1.15
-    const starlinkRepCount = 200
-    for (let i = 0; i < starlinkRepCount; i++) {
-      const plane = Math.floor(Math.random() * starlinkOrbitalPlanes)
-      const angle = Math.random() * Math.PI * 2
-      const inclination = starlinkIncline * Math.PI / 180
-      const planeRotation = (plane / starlinkOrbitalPlanes) * Math.PI * 2
-
-      const x = Math.cos(angle) * starlinkAltRatio
-      const z = Math.sin(angle) * starlinkAltRatio
-      const y = z * Math.sin(inclination)
-      const z2 = z * Math.cos(inclination)
-
-      const rotX = x * Math.cos(planeRotation) - z2 * Math.sin(planeRotation)
-      const rotZ = x * Math.sin(planeRotation) + z2 * Math.cos(planeRotation)
-
-      const satGeo = new THREE.SphereGeometry(0.015, 6, 6)
-      const satMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6, emissive: 0x3b82f6, emissiveIntensity: 1.0 })
-      const sat = new THREE.Mesh(satGeo, satMat)
-      sat.position.set(rotX, y, rotZ)
-      globeGroup.add(sat)
-      starlinkDots.push(sat)
-    }
-
-    // OneWeb: 12 planes, inclination 87°, altitude 1.25 (648 sats → 50 dots)
-    const onewebOrbitalPlanes = 12
-    const onewebIncline = 87
-    const onewebAltRatio = 1.25
-    const onewebRepCount = 50
-    for (let i = 0; i < onewebRepCount; i++) {
-      const plane = Math.floor(Math.random() * onewebOrbitalPlanes)
-      const angle = Math.random() * Math.PI * 2
-      const inclination = onewebIncline * Math.PI / 180
-      const planeRotation = (plane / onewebOrbitalPlanes) * Math.PI * 2
-
-      const x = Math.cos(angle) * onewebAltRatio
-      const z = Math.sin(angle) * onewebAltRatio
-      const y = z * Math.sin(inclination)
-      const z2 = z * Math.cos(inclination)
-
-      const rotX = x * Math.cos(planeRotation) - z2 * Math.sin(planeRotation)
-      const rotZ = x * Math.sin(planeRotation) + z2 * Math.cos(planeRotation)
-
-      const satGeo = new THREE.SphereGeometry(0.012, 6, 6)
-      const satMat = new THREE.MeshBasicMaterial({ color: 0x8b5cf6, emissive: 0x8b5cf6, emissiveIntensity: 1.0 })
-      const sat = new THREE.Mesh(satGeo, satMat)
-      sat.position.set(rotX, y, rotZ)
-      globeGroup.add(sat)
-      onewebDots.push(sat)
-    }
-
-    // Intelsat GEO: 1 plane (equatorial), inclination 0°, altitude 1.5 (50+ sats → 20 dots)
-    const intelsatAltRatio = 1.5
-    const intelsatRepCount = 20
-    for (let i = 0; i < intelsatRepCount; i++) {
-      const angle = Math.random() * Math.PI * 2
-      const x = Math.cos(angle) * intelsatAltRatio
-      const z = Math.sin(angle) * intelsatAltRatio
-
-      const satGeo = new THREE.SphereGeometry(0.014, 6, 6)
-      const satMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, emissive: 0xf59e0b, emissiveIntensity: 1.0 })
-      const sat = new THREE.Mesh(satGeo, satMat)
-      sat.position.set(x, 0, z)
-      globeGroup.add(sat)
-      intelsatDots.push(sat)
-    }
-
-    // ════════════════════════════════════════════════════════════
-    // 5. AIRPORT HUB BEACONS (bright green, pulsing)
-    // ════════════════════════════════════════════════════════════
-    const hubs = [
-      { lat: 48.9, lon: 2.3, name: 'CDG' },
-      { lat: 40.6, lon: -73.8, name: 'JFK' },
-      { lat: 33.9, lon: -118.4, name: 'LAX' },
-      { lat: 25.3, lon: 55.4, name: 'DXB' },
-      { lat: 1.4, lon: 103.8, name: 'SIN' },
-      { lat: 35.5, lon: 139.8, name: 'NRT' },
-      { lat: -33.9, lon: 151.2, name: 'SYD' },
+    // Markers: [lat, lng, size]
+    const markerLocations: [number, number, number][] = [
+      [48.86, 2.35, 0.05],      // Paris
+      [40.64, -73.78, 0.05],    // NYC
+      [33.94, -118.41, 0.04],   // LA
+      [25.25, 55.36, 0.05],     // Dubai
+      [1.35, 103.82, 0.04],     // Singapore
+      [35.68, 139.77, 0.04],    // Tokyo
+      [-33.87, 151.21, 0.03],   // Sydney
+      [51.47, -0.46, 0.04],     // London
+      [55.75, 37.62, 0.03],     // Moscow
+      [22.30, 114.17, 0.04],    // Hong Kong
+      [37.57, 126.98, 0.03],    // Seoul
+      [-23.55, -46.63, 0.03],   // São Paulo
+      [19.43, -99.13, 0.03],    // Mexico City
+      [28.61, 77.21, 0.04],     // Delhi
     ]
 
-    const hubMeshes: THREE.Mesh[] = []
-    const pulseRings: THREE.Mesh[] = []
-
-    hubs.forEach(hub => {
-      const pos = latLonToVec3(hub.lat, hub.lon, 1.008)
-
-      // Hub beacon
-      const hubGeo = new THREE.SphereGeometry(0.018, 12, 12)
-      const hubMat = new THREE.MeshBasicMaterial({ color: 0x34d399, emissive: 0x34d399, emissiveIntensity: 1.2 })
-      const hubMesh = new THREE.Mesh(hubGeo, hubMat)
-      hubMesh.position.copy(pos)
-      globeGroup.add(hubMesh)
-      hubMeshes.push(hubMesh)
-
-      // Pulse rings
-      const pulseGeo = new THREE.TorusGeometry(0.018, 0.003, 16, 16)
-      const pulseMat = new THREE.MeshBasicMaterial({ color: 0x34d399, transparent: true, emissive: 0x34d399 })
-      const pulse = new THREE.Mesh(pulseGeo, pulseMat)
-      pulse.position.copy(pos)
-      pulse.lookAt(0, 0, 0)
-      globeGroup.add(pulse)
-      pulseRings.push(pulse)
-    })
-    pulseRef.current = pulseRings
-
-    // ════════════════════════════════════════════════════════════
-    // 6. CONNECTION ARCS BETWEEN HUBS (cyan with traveling dots)
-    // ════════════════════════════════════════════════════════════
-    const arcConnections = [
-      [0, 1], // CDG ↔ JFK
-      [0, 3], // CDG ↔ DXB
-      [1, 2], // JFK ↔ LAX
-      [3, 4], // DXB ↔ SIN
-      [4, 5], // SIN ↔ NRT
-      [5, 2], // NRT ↔ LAX
-      [0, 4]  // CDG ↔ SIN
-    ]
-
-    const arcDotsArrays: any[] = []
-
-    arcConnections.forEach(([i, j]) => {
-      const h1 = hubs[i]
-      const h2 = hubs[j]
-      const p1 = latLonToVec3(h1.lat, h1.lon, 1.008)
-      const p2 = latLonToVec3(h2.lat, h2.lon, 1.008)
-
-      // Curved arc with elevated midpoint
-      const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5)
-      const dist = p1.distanceTo(p2)
-      const elevation = mid.normalize().multiplyScalar(1.008 + dist / 3)
-      const curve = new THREE.QuadraticBezierCurve3(p1, elevation, p2)
-      const arcPoints = curve.getPoints(50)
-
-      // Arc line
-      const arcGeo = new THREE.BufferGeometry().setFromPoints(arcPoints)
-      const arcMat = new THREE.LineBasicMaterial({ color: 0x06b6d4, transparent: true, opacity: 0.5, fog: false })
-      const arcLine = new THREE.Line(arcGeo, arcMat)
-      globeGroup.add(arcLine)
-
-      // Animated traveling dots
-      const dotPositions: number[] = []
-      for (let k = 0; k < 8; k++) {
-        dotPositions.push(0, 0, 0)
-      }
-      const dotGeo = new THREE.BufferGeometry()
-      dotGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(dotPositions), 3))
-      const dotMat = new THREE.PointsMaterial({ color: 0x06b6d4, size: 0.025, transparent: true, fog: false })
-      const dots = new THREE.Points(dotGeo, dotMat)
-      globeGroup.add(dots)
-
-      arcDotsArrays.push({ points: dots, arcPoints, positions: dotPositions, geo: dotGeo })
-    })
-    arcDotsRef.current = arcDotsArrays
-
-    // ════════════════════════════════════════════════════════════
-    // 7. MOUSE INTERACTION & INERTIA
-    // ════════════════════════════════════════════════════════════
-    const onMouseDown = (e: MouseEvent) => {
-      mouseRef.current = { x: e.clientX, y: e.clientY, down: true, vx: 0, vy: 0 }
-    }
-    const onMouseUp = () => {
-      mouseRef.current.down = false
-    }
-    const onMouseMove = (e: MouseEvent) => {
-      if (!mouseRef.current.down) return
-      const dx = e.clientX - mouseRef.current.x
-      const dy = e.clientY - mouseRef.current.y
-      mouseRef.current.vx = dx * 0.002
-      mouseRef.current.vy = dy * 0.002
-      rotRef.current.ty += mouseRef.current.vx
-      rotRef.current.tx += mouseRef.current.vy
-      rotRef.current.tx = Math.max(-Math.PI * 0.4, Math.min(Math.PI * 0.4, rotRef.current.tx))
-      mouseRef.current.x = e.clientX
-      mouseRef.current.y = e.clientY
-    }
-
-    renderer.domElement.addEventListener('mousedown', onMouseDown)
-    window.addEventListener('mouseup', onMouseUp)
-    window.addEventListener('mousemove', onMouseMove)
-    renderer.domElement.style.cursor = 'grab'
-
-    // ════════════════════════════════════════════════════════════
-    // 8. ANIMATION LOOP
-    // ════════════════════════════════════════════════════════════
-    let time = 0
-    const animate = () => {
-      time += 0.0016
-
-      // Inertia decay
-      if (!mouseRef.current.down) {
-        mouseRef.current.vx *= 0.92
-        mouseRef.current.vy *= 0.92
-        rotRef.current.ty += mouseRef.current.vx
-        rotRef.current.tx += mouseRef.current.vy
-      }
-
-      // Auto-rotate when idle
-      if (!mouseRef.current.down && Math.abs(mouseRef.current.vx) < 0.0001) {
-        rotRef.current.ty += 0.0002
-      }
-
-      // Smooth interpolation
-      rotRef.current.x += (rotRef.current.tx - rotRef.current.x) * 0.1
-      rotRef.current.y += (rotRef.current.ty - rotRef.current.y) * 0.1
-
-      globeGroup.rotation.order = 'YXZ'
-      globeGroup.rotation.y = rotRef.current.y
-      globeGroup.rotation.x = rotRef.current.x
-
-      // Update pulse rings
-      pulseRef.current.forEach(pulse => {
-        const scale = 1.0 + Math.sin(time * 5) * 0.3
-        pulse.scale.set(scale, scale, scale)
-        pulse.material.opacity = Math.max(0, 0.6 - Math.sin(time * 5) * 0.3)
-      })
-
-      // Update arc dots
-      arcDotsRef.current.forEach(arc => {
-        const positions = arc.positions || []
-        const arcPoints = arc.arcPoints
-        for (let k = 0; k < 8; k++) {
-          const t = (time * 0.5 + k * 0.125) % 1
-          const idx = Math.floor(t * (arcPoints.length - 1))
-          const p = arcPoints[idx]
-          positions[k * 3] = p.x
-          positions[k * 3 + 1] = p.y
-          positions[k * 3 + 2] = p.z
-        }
-        if (arc.geo) {
-          arc.geo.attributes.position.needsUpdate = true
-        }
-      })
-
-      renderer.render(scene, camera)
-      frameRef.current = requestAnimationFrame(animate)
-    }
-    frameRef.current = requestAnimationFrame(animate)
-
-    // ════════════════════════════════════════════════════════════
-    // 9. RESIZE HANDLER
-    // ════════════════════════════════════════════════════════════
+    const canvas = canvasRef.current!
     const onResize = () => {
-      const nw = container.clientWidth
-      const nh = Math.min(nw * 0.75, 600)
-      camera.aspect = nw / nh
-      camera.updateProjectionMatrix()
-      renderer.setSize(nw, nh)
+      widthRef.current = canvas.offsetWidth
     }
     window.addEventListener('resize', onResize)
+    onResize()
+
+    const globe = createGlobe(canvas, {
+      devicePixelRatio: 2,
+      width: widthRef.current * 2,
+      height: widthRef.current * 2,
+      phi: 0,
+      theta: 0.3,
+      dark: 1,
+      diffuse: 1.2,
+      mapSamples: 36000,
+      mapBrightness: 2.5,
+      baseColor: [0.05, 0.1, 0.2],
+      markerColor: [0.1, 0.8, 0.5],
+      glowColor: [0.08, 0.18, 0.4],
+      markers: markerLocations.map(([lat, lng, size]) => ({ location: [lat, lng], size })),
+      onRender: (state) => {
+        // Auto-rotate when not interacting
+        if (!pointerInteracting.current) {
+          currentPhi += 0.003
+        }
+        state.phi = currentPhi + pointerInteractionMovement.current
+        state.theta = currentTheta
+        state.width = widthRef.current * 2
+        state.height = widthRef.current * 2
+      },
+    })
+
+    setTimeout(() => { if (canvas) canvas.style.opacity = '1' })
 
     return () => {
-      cancelAnimationFrame(frameRef.current)
+      globe.destroy()
       window.removeEventListener('resize', onResize)
-      window.removeEventListener('mouseup', onMouseUp)
-      window.removeEventListener('mousemove', onMouseMove)
-      renderer.domElement.removeEventListener('mousedown', onMouseDown)
-      renderer.dispose()
-      if (earthTexture) earthTexture.dispose()
-      if (container.contains(renderer.domElement)) {
-        container.removeChild(renderer.domElement)
-      }
     }
   }, [])
 
   return (
     <section className="py-24 lg:py-32 bg-[#060d1b] relative overflow-hidden">
-      <div className="absolute inset-0">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[900px] rounded-full bg-blue-500/[0.03] blur-[150px]" />
+      {/* Background glows */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-blue-500/[0.04] blur-[120px]" />
+        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] rounded-full bg-emerald-500/[0.02] blur-[100px]" />
       </div>
 
       <div className="relative z-10 max-w-[1400px] mx-auto px-6 lg:px-10">
@@ -862,6 +544,7 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
           </p>
         </Reveal>
 
+        {/* Stats */}
         <Reveal delay={200}>
           <div className="flex justify-center gap-10 lg:gap-16 mb-8">
             <div className="text-center">
@@ -881,11 +564,45 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
           </div>
         </Reveal>
 
+        {/* Globe */}
         <Reveal delay={300}>
-          <div className="relative">
-            <div ref={containerRef} className="w-full flex justify-center" />
-            {/* Legend overlay */}
-            <div className="absolute bottom-6 left-6 flex flex-col gap-2 z-10">
+          <div className="relative flex justify-center">
+            <div className="relative w-full max-w-[620px] aspect-square">
+              <canvas
+                ref={canvasRef}
+                className="w-full h-full opacity-0 transition-opacity duration-1000"
+                style={{ contain: 'layout paint size', cursor: 'grab' }}
+                onPointerDown={(e) => {
+                  pointerInteracting.current = e.clientX - pointerInteractionMovement.current
+                  if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing'
+                }}
+                onPointerUp={() => {
+                  pointerInteracting.current = null
+                  if (canvasRef.current) canvasRef.current.style.cursor = 'grab'
+                }}
+                onPointerOut={() => {
+                  pointerInteracting.current = null
+                  if (canvasRef.current) canvasRef.current.style.cursor = 'grab'
+                }}
+                onMouseMove={(e) => {
+                  if (pointerInteracting.current !== null) {
+                    const delta = e.clientX - pointerInteracting.current
+                    pointerInteractionMovement.current = delta / 200
+                  }
+                }}
+                onTouchMove={(e) => {
+                  if (pointerInteracting.current !== null && e.touches[0]) {
+                    const delta = e.touches[0].clientX - pointerInteracting.current
+                    pointerInteractionMovement.current = delta / 100
+                  }
+                }}
+              />
+              {/* Radial fade edges */}
+              <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(circle at 50% 50%, transparent 40%, #060d1b 72%)' }} />
+            </div>
+
+            {/* Legend */}
+            <div className="absolute bottom-8 left-4 lg:left-8 flex flex-col gap-2 z-10">
               {[
                 { name: 'Starlink · LEO 550km', color: '#3b82f6', count: '6 300+' },
                 { name: 'OneWeb · LEO 1 200km', color: '#8b5cf6', count: '648' },
@@ -898,18 +615,15 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
                 </div>
               ))}
             </div>
-            <div className="absolute bottom-6 right-6 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/[0.04] z-10">
+            <div className="absolute bottom-8 right-4 lg:right-8 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/[0.04] z-10">
               <div className="w-2 h-2 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 8px rgba(52,211,153,0.6)' }} />
               <span className="text-[10px] text-white/40">{lang === 'fr' ? 'Hubs aéroportuaires' : 'Airport hubs'}</span>
-            </div>
-            <div className="absolute top-4 right-6 text-[9px] text-white/15 z-10">
-              {lang === 'fr' ? '↕ Glisser pour pivoter' : '↕ Drag to rotate'}
             </div>
           </div>
         </Reveal>
 
         <Reveal delay={400}>
-          <p className="text-center text-[11px] text-white/15 mt-6 max-w-[600px] mx-auto">
+          <p className="text-center text-[11px] text-white/15 mt-4 max-w-[600px] mx-auto">
             {lang === 'fr'
               ? "Airmont est agnostique : compatible Ku-band, Ka-band, L-band, LEO et GEO. Aucune dépendance opérateur."
               : 'Airmont is agnostic: Ku-band, Ka-band, L-band, LEO & GEO compatible. Zero operator lock-in.'}
