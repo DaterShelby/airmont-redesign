@@ -523,21 +523,17 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
         controls.enableDamping = true
         controls.dampingFactor = 0.1
       }
-      // Scene & renderer customization — fully transparent background
-      const scene = g.scene()
-      if (scene) {
-        scene.background = null
-      }
-      const renderer = g.renderer()
-      if (renderer) {
-        renderer.setClearColor(0x000000, 0)
-        renderer.setClearAlpha(0)
-        // Access the canvas directly to remove any visible border
-        const canvas = renderer.domElement
-        if (canvas) {
-          canvas.style.background = 'transparent'
+      // Fully transparent background — no visible canvas rectangle
+      try {
+        const scene = g.scene()
+        if (scene) scene.background = null
+        const renderer = g.renderer()
+        if (renderer) {
+          renderer.setClearColor(0x000000, 0)
+          renderer.setClearAlpha(0)
+          renderer.domElement.style.background = 'transparent'
         }
-      }
+      } catch(e) { /* ignore if methods unavailable */ }
     }
   }, [])
 
@@ -589,17 +585,26 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
           <div className="relative flex justify-center" ref={containerRef}>
             <div
               className="relative transition-opacity duration-1000"
-              style={{ opacity: globeReady ? 1 : 0, width: globeSize, height: globeSize }}
+              style={{
+                opacity: globeReady ? 1 : 0,
+                width: globeSize,
+                height: globeSize,
+                borderRadius: '50%',
+                overflow: 'hidden',
+                maskImage: 'radial-gradient(circle at 50% 50%, black 38%, transparent 58%)',
+                WebkitMaskImage: 'radial-gradient(circle at 50% 50%, black 38%, transparent 58%)',
+              }}
             >
               <Globe
                 ref={globeRef}
                 width={globeSize}
                 height={globeSize}
                 backgroundColor="rgba(0,0,0,0)"
+                rendererConfig={{ antialias: true, alpha: true }}
                 globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
                 bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
                 atmosphereColor="#3b82f6"
-                atmosphereAltitude={0.2}
+                atmosphereAltitude={0.25}
                 showAtmosphere={true}
 
                 // Hub points
@@ -646,10 +651,7 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
 
                 onGlobeReady={onGlobeReady}
               />
-              {/* Multi-layer vignette to seamlessly blend globe into background */}
-              <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(circle at 50% 50%, transparent 30%, rgba(6,13,27,0.3) 42%, rgba(6,13,27,0.7) 52%, #060d1b 62%)' }} />
-              <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(to bottom, #060d1b 0%, transparent 12%, transparent 88%, #060d1b 100%)' }} />
-              <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(to right, #060d1b 0%, transparent 12%, transparent 88%, #060d1b 100%)' }} />
+              {/* No vignette needed - CSS mask handles seamless fade */}
             </div>
 
             {/* Legend */}
