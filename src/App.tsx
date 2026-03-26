@@ -523,7 +523,7 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
         controls.enableDamping = true
         controls.dampingFactor = 0.1
       }
-      // Fully transparent background — no visible canvas rectangle
+      // Force fully transparent WebGL canvas
       try {
         const scene = g.scene()
         if (scene) scene.background = null
@@ -531,9 +531,13 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
         if (renderer) {
           renderer.setClearColor(0x000000, 0)
           renderer.setClearAlpha(0)
-          renderer.domElement.style.background = 'transparent'
+          const canvas = renderer.domElement
+          if (canvas) {
+            canvas.style.background = 'none'
+            canvas.style.backgroundColor = 'transparent'
+          }
         }
-      } catch(e) { /* ignore if methods unavailable */ }
+      } catch(e) { /* ignore */ }
     }
   }, [])
 
@@ -605,7 +609,8 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
                 ref={globeRef}
                 width={globeSize * 2}
                 height={globeSize * 2}
-                backgroundColor="#060d1b"
+                backgroundColor="rgba(0,0,0,0)"
+                rendererConfig={{ antialias: true, alpha: true }}
                 globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
                 bumpImageUrl="//unpkg.com/three-globe/example/img/earth-topology.png"
                 atmosphereColor="#3b82f6"
@@ -657,18 +662,6 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
                 onGlobeReady={onGlobeReady}
               />
               </div>
-              {/* Edge covers — solid color bars that hide canvas borders */}
-              <div className="absolute pointer-events-none" style={{ top: 0, left: 0, right: 0, height: '15%', background: 'linear-gradient(to bottom, #060d1b 0%, #060d1b 40%, transparent 100%)' }} />
-              <div className="absolute pointer-events-none" style={{ bottom: 0, left: 0, right: 0, height: '15%', background: 'linear-gradient(to top, #060d1b 0%, #060d1b 40%, transparent 100%)' }} />
-              <div className="absolute pointer-events-none" style={{ top: 0, bottom: 0, left: 0, width: '15%', background: 'linear-gradient(to right, #060d1b 0%, #060d1b 40%, transparent 100%)' }} />
-              <div className="absolute pointer-events-none" style={{ top: 0, bottom: 0, right: 0, width: '15%', background: 'linear-gradient(to left, #060d1b 0%, #060d1b 40%, transparent 100%)' }} />
-              {/* Corner fills */}
-              <div className="absolute pointer-events-none" style={{ top: 0, left: 0, width: '25%', height: '25%', background: '#060d1b' }} />
-              <div className="absolute pointer-events-none" style={{ top: 0, right: 0, width: '25%', height: '25%', background: '#060d1b' }} />
-              <div className="absolute pointer-events-none" style={{ bottom: 0, left: 0, width: '25%', height: '25%', background: '#060d1b' }} />
-              <div className="absolute pointer-events-none" style={{ bottom: 0, right: 0, width: '25%', height: '25%', background: '#060d1b' }} />
-              {/* Radial vignette on top for smooth circular blend */}
-              <div className="absolute inset-0 pointer-events-none" style={{ background: 'radial-gradient(circle at 50% 50%, transparent 25%, rgba(6,13,27,0.4) 35%, rgba(6,13,27,0.85) 45%, #060d1b 55%)' }} />
             </div>
 
             {/* Legend */}
