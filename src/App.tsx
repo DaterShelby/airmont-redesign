@@ -908,12 +908,22 @@ function HorizontalGallery({ images }: { images: { src: string; label: string }[
       {/* Lightbox modal */}
       {lightbox !== null && (
         <div
-          className="fixed inset-0 z-[9999] bg-black/90 backdrop-blur-xl flex items-center justify-center"
+          className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-xl flex items-center justify-center animate-fadeIn"
           onClick={() => setLightbox(null)}
         >
+          <style>{`
+            @keyframes fadeIn {
+              from { opacity: 0; }
+              to { opacity: 1; }
+            }
+            .animate-fadeIn {
+              animation: fadeIn 0.3s ease-out;
+            }
+          `}</style>
+
           {/* Close button */}
           <button
-            className="absolute top-6 right-6 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+            className="absolute top-6 right-6 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors z-10"
             onClick={() => setLightbox(null)}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
@@ -922,7 +932,7 @@ function HorizontalGallery({ images }: { images: { src: string; label: string }[
           {/* Previous */}
           {lightbox > 0 && (
             <button
-              className="absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+              className="absolute left-4 lg:left-8 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors z-10"
               onClick={(e) => { e.stopPropagation(); setLightbox(lightbox - 1) }}
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>
@@ -932,19 +942,22 @@ function HorizontalGallery({ images }: { images: { src: string; label: string }[
           {/* Next */}
           {lightbox < images.length - 1 && (
             <button
-              className="absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
+              className="absolute right-4 lg:right-8 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors z-10"
               onClick={(e) => { e.stopPropagation(); setLightbox(lightbox + 1) }}
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
             </button>
           )}
 
-          {/* Image */}
-          <div className="max-w-[90vw] max-h-[85vh] px-4" onClick={(e) => e.stopPropagation()}>
+          {/* Image container */}
+          <div className="max-w-[90vw] max-h-[85vh] px-4 flex flex-col items-center justify-center" onClick={(e) => e.stopPropagation()}>
             <img
               src={images[lightbox].src}
               alt={images[lightbox].label}
-              className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-2xl"
+              className="max-w-full max-h-[75vh] w-auto h-auto object-contain rounded-xl shadow-2xl animate-fadeIn"
+              onError={(e) => {
+                console.error('Image failed to load:', images[lightbox].src)
+              }}
             />
             <p className="text-center mt-4 text-white/60 text-sm font-medium">{images[lightbox].label}</p>
           </div>
@@ -1214,163 +1227,264 @@ function BandwidthSimulator({ lang }: { lang: Lang }) {
   const simultaneousStreams = Math.floor(maxSatelliteBW / compressedStreamBW)
   const remainingBW = Math.max(0, maxSatelliteBW - bwWith)
 
+  // Calculate gauge progress (0-1)
+  const gaugeWithout = bwWithout / maxSatelliteBW
+  const gaugeWith = bwWith / maxSatelliteBW
+
+  // SVG circular gauge helper
+  const CircularGauge = ({ percentage, isAlarm }: { percentage: number; isAlarm: boolean }) => {
+    const circumference = 2 * Math.PI * 45
+    const strokeDashoffset = circumference * (1 - percentage)
+    return (
+      <svg viewBox="0 0 120 120" className="w-32 h-32">
+        {/* Background grid */}
+        <defs>
+          <pattern id="grid" width="4" height="4" patternUnits="userSpaceOnUse">
+            <path d="M 4 0 L 0 0 0 4" fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5"/>
+          </pattern>
+        </defs>
+        <circle cx="60" cy="60" r="50" fill={isAlarm ? 'rgba(239,68,68,0.05)' : 'rgba(16,185,129,0.05)'} />
+        <circle cx="60" cy="60" r="50" fill="url(#grid)" />
+
+        {/* Outer ring - subtle */}
+        <circle cx="60" cy="60" r="50" fill="none" stroke={isAlarm ? 'rgba(239,68,68,0.15)' : 'rgba(16,185,129,0.15)'} strokeWidth="0.5" />
+
+        {/* Background circle */}
+        <circle cx="60" cy="60" r="45" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
+
+        {/* Animated gauge arc */}
+        <circle
+          cx="60"
+          cy="60"
+          r="45"
+          fill="none"
+          stroke={isAlarm ? 'url(#alarmGradient)' : 'url(#successGradient)'}
+          strokeWidth="4"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          style={{
+            transition: 'stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1)',
+            transform: 'rotate(-90deg)',
+            transformOrigin: '60px 60px'
+          }}
+        />
+
+        {/* Glow effect */}
+        <circle
+          cx="60"
+          cy="60"
+          r="45"
+          fill="none"
+          stroke={isAlarm ? 'rgba(239,68,68,0.3)' : 'rgba(16,185,129,0.3)'}
+          strokeWidth="4"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          opacity="0.3"
+          filter="blur(2px)"
+          style={{
+            transition: 'stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1)',
+            transform: 'rotate(-90deg)',
+            transformOrigin: '60px 60px'
+          }}
+        />
+
+        <defs>
+          <linearGradient id="alarmGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#ef4444" />
+            <stop offset="100%" stopColor="#f97316" />
+          </linearGradient>
+          <linearGradient id="successGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#10b981" />
+            <stop offset="100%" stopColor="#06b6d4" />
+          </linearGradient>
+        </defs>
+      </svg>
+    )
+  }
+
   return (
-    <section className="py-24 lg:py-32 relative overflow-hidden">
-      <div className="absolute inset-0">
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] rounded-full bg-blue-500/[0.04] blur-[150px]" />
-        <div className="absolute bottom-0 right-0 w-[600px] h-[500px] rounded-full bg-emerald-500/[0.03] blur-[120px]" />
+    <section className="py-24 lg:py-32 relative overflow-hidden bg-[#060d1b]">
+      {/* Subtle animated background */}
+      <div className="absolute inset-0 opacity-40">
+        <div className="absolute top-1/4 left-1/4 w-[300px] h-[300px] bg-cyan-500/5 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute bottom-1/4 right-1/4 w-[250px] h-[250px] bg-emerald-500/5 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
       </div>
 
+      {/* Grid overlay */}
+      <div className="absolute inset-0 opacity-[0.02]" style={{
+        backgroundImage: 'linear-gradient(0deg, transparent 24%, rgba(255,255,255,.05) 25%, rgba(255,255,255,.05) 26%, transparent 27%, transparent 74%, rgba(255,255,255,.05) 75%, rgba(255,255,255,.05) 76%, transparent 77%, transparent), linear-gradient(90deg, transparent 24%, rgba(255,255,255,.05) 25%, rgba(255,255,255,.05) 26%, transparent 27%, transparent 74%, rgba(255,255,255,.05) 75%, rgba(255,255,255,.05) 76%, transparent 77%, transparent)',
+        backgroundSize: '50px 50px'
+      }} />
+
       <div className="relative z-10 max-w-[1400px] mx-auto px-6 lg:px-10">
-        <Reveal className="text-center mb-16 lg:mb-20">
-          <SectionLabel>{lang === 'fr' ? 'Simulateur de performance' : 'Performance Simulator'}</SectionLabel>
-          <h2 className="font-display text-[clamp(32px,4vw,52px)] font-bold tracking-tight text-[#0c1a30] leading-[1.1]">
-            {lang === 'fr' ? 'Voyez la différence en temps réel.' : 'See the difference in real-time.'}
+        <Reveal className="text-center mb-20 lg:mb-24">
+          <SectionLabel light>{lang === 'fr' ? 'Simulateur de performance' : 'Performance Simulator'}</SectionLabel>
+          <h2 className="font-display text-[clamp(32px,4vw,52px)] font-bold tracking-tight text-white leading-[1.1]">
+            {lang === 'fr' ? 'Tableau de bord mission-critique.' : 'Mission-critical dashboard.'}
           </h2>
-          <p className="mt-5 text-[16px] text-[#0c1a30]/35 max-w-[560px] mx-auto">
+          <p className="mt-5 text-[16px] text-white/35 max-w-[560px] mx-auto">
             {lang === 'fr'
-              ? 'Ajustez le nombre de passagers et découvrez comment Streamtime optimise votre bande passante satellite.'
-              : 'Adjust passenger count and discover how Streamtime optimizes your satellite bandwidth.'}
+              ? 'Observez en temps réel comment Streamtime transforme vos performances. Passagers = débit satellite.'
+              : 'Watch real-time how Streamtime transforms your performance. Passengers = satellite throughput.'}
           </p>
         </Reveal>
 
         <Reveal delay={100}>
-          <div className="max-w-[1000px] mx-auto">
+          <div className="max-w-[1200px] mx-auto">
             {/* Slider control */}
-            <div className="mb-12 px-6 lg:px-0">
-              <div className="flex items-center justify-between mb-4">
-                <label className="text-[14px] font-semibold text-[#0c1a30]/60">
+            <div className="mb-16 px-6 lg:px-0">
+              <div className="flex items-center justify-between mb-6">
+                <label className="text-[14px] font-semibold text-white/60 tracking-wide">
                   {lang === 'fr' ? 'Nombre de passagers' : 'Number of Passengers'}
                 </label>
-                <div className="text-[28px] font-display font-bold text-blue-600">{passengers}</div>
+                <div className="text-[48px] font-display font-bold text-cyan-400" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                  {passengers}
+                </div>
               </div>
-              <input
-                type="range"
-                min="1"
-                max="200"
-                value={passengers}
-                onChange={(e) => setPassengers(parseInt(e.target.value))}
-                className="w-full h-2 bg-[#0c1a30]/10 rounded-lg appearance-none cursor-pointer slider"
-                style={{
-                  background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(passengers/200)*100}%, rgba(12,26,48,0.1) ${(passengers/200)*100}%, rgba(12,26,48,0.1) 100%)`
-                }}
-              />
-              <div className="flex justify-between text-[11px] text-[#0c1a30]/30 mt-2">
+              <div className="relative">
+                <input
+                  type="range"
+                  min="1"
+                  max="200"
+                  value={passengers}
+                  onChange={(e) => setPassengers(parseInt(e.target.value))}
+                  className="w-full h-3 bg-white/10 rounded-full appearance-none cursor-pointer accent-cyan-400"
+                  style={{
+                    background: `linear-gradient(to right, #06b6d4 0%, #06b6d4 ${(passengers/200)*100}%, rgba(255,255,255,0.1) ${(passengers/200)*100}%, rgba(255,255,255,0.1) 100%)`
+                  }}
+                />
+              </div>
+              <div className="flex justify-between text-[11px] text-white/25 mt-3 tracking-wide">
                 <span>1</span>
+                <span>100</span>
                 <span>200</span>
               </div>
             </div>
 
-            {/* Comparison cards */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
-              {/* Without Airmont */}
+            {/* Comparison cards - Dashboard style */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-16">
+              {/* Without Streamtime - Alarm State */}
               <Reveal delay={150}>
-                <div className="rounded-2xl border border-red-400/20 bg-gradient-to-br from-red-50/40 to-red-50/10 p-8 lg:p-10">
-                  <div className="flex items-center gap-3 mb-8">
-                    <div className="w-3 h-3 rounded-full bg-red-400/50" />
-                    <h3 className="text-[16px] font-bold text-[#0c1a30] tracking-tight">
+                <div className="rounded-2xl border border-red-500/20 bg-gradient-to-br from-red-950/20 to-red-950/5 p-8 lg:p-10 backdrop-blur-sm relative overflow-hidden">
+                  {/* Alarm pulse */}
+                  <div className="absolute top-3 right-3 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+
+                  <div className="flex items-center gap-3 mb-10">
+                    <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                    <h3 className="text-[16px] font-bold text-red-400 tracking-tight">
                       {lang === 'fr' ? 'Sans Streamtime' : 'Without Streamtime'}
                     </h3>
                   </div>
 
-                  {/* Bandwidth gauge */}
-                  <div className="mb-8">
-                    <div className="flex items-end gap-2 h-[140px] bg-[#0c1a30]/[0.04] rounded-xl p-4">
-                      {[...Array(5)].map((_, i) => {
-                        const h = (bwWithout / maxSatelliteBW) * 120 * (0.7 + i * 0.06)
-                        return (
-                          <div
-                            key={i}
-                            className="flex-1 bg-gradient-to-t from-red-400 to-red-300 rounded-t-lg transition-all duration-300"
-                            style={{ height: `${Math.max(8, h)}px`, opacity: 0.6 }}
-                          />
-                        )
-                      })}
+                  {/* Gauge container */}
+                  <div className="flex justify-center mb-10">
+                    <CircularGauge percentage={gaugeWithout} isAlarm={true} />
+                  </div>
+
+                  {/* Value display */}
+                  <div className="text-center mb-8">
+                    <div className="text-[56px] font-display font-bold text-red-400" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {bwWithout.toFixed(1)}
                     </div>
-                    <div className="mt-4 text-center">
-                      <div className="text-[32px] font-display font-bold text-red-500">{bwWithout.toFixed(1)}</div>
-                      <div className="text-[11px] text-[#0c1a30]/40 mt-1">{lang === 'fr' ? 'Mbps utilisés' : 'Mbps in use'}</div>
+                    <div className="text-[12px] text-white/40 mt-2 tracking-wide uppercase">{lang === 'fr' ? 'Mbps consommés' : 'Mbps consumed'}</div>
+                  </div>
+
+                  {/* Status indicator */}
+                  <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-4 mb-6">
+                    <div className="text-[13px] text-red-300 text-center font-medium">
+                      {lang === 'fr' ? '⚠️ Saturation imminente' : '⚠️ Saturation imminent'}
                     </div>
                   </div>
 
                   {/* Details */}
-                  <div className="space-y-3 border-t border-red-400/10 pt-6">
+                  <div className="space-y-3 border-t border-white/5 pt-6">
                     <div className="flex justify-between items-center text-[13px]">
-                      <span className="text-[#0c1a30]/50">{lang === 'fr' ? 'Par flux' : 'Per stream'}</span>
-                      <span className="font-semibold text-[#0c1a30]">{standardStreamBW} Mbps</span>
+                      <span className="text-white/50">{lang === 'fr' ? 'Par flux' : 'Per stream'}</span>
+                      <span className="font-semibold text-white/80" style={{ fontVariantNumeric: 'tabular-nums' }}>{standardStreamBW} Mbps</span>
                     </div>
                     <div className="flex justify-between items-center text-[13px]">
-                      <span className="text-[#0c1a30]/50">{lang === 'fr' ? 'Flux simultanés' : 'Simultaneous'}</span>
-                      <span className="font-semibold text-[#0c1a30]">~{Math.floor(passengers * 0.3)}</span>
+                      <span className="text-white/50">{lang === 'fr' ? 'Utilisation' : 'Utilization'}</span>
+                      <span className="font-semibold text-red-400" style={{ fontVariantNumeric: 'tabular-nums' }}>{(gaugeWithout * 100).toFixed(0)}%</span>
                     </div>
                   </div>
                 </div>
               </Reveal>
 
-              {/* With Airmont */}
+              {/* With Streamtime - Optimal State */}
               <Reveal delay={200}>
-                <div className="rounded-2xl border border-emerald-400/20 bg-gradient-to-br from-emerald-50/40 to-emerald-50/10 p-8 lg:p-10">
-                  <div className="flex items-center gap-3 mb-8">
-                    <div className="w-3 h-3 rounded-full bg-emerald-400/50" />
-                    <h3 className="text-[16px] font-bold text-[#0c1a30] tracking-tight">
+                <div className="rounded-2xl border border-emerald-500/30 bg-gradient-to-br from-emerald-950/30 to-emerald-950/10 p-8 lg:p-10 backdrop-blur-sm relative overflow-hidden">
+                  {/* Status glow */}
+                  <div className="absolute top-3 right-3 w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+
+                  <div className="flex items-center gap-3 mb-10">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <h3 className="text-[16px] font-bold text-emerald-400 tracking-tight">
                       {lang === 'fr' ? 'Avec Streamtime' : 'With Streamtime'}
                     </h3>
                   </div>
 
-                  {/* Bandwidth gauge */}
-                  <div className="mb-8">
-                    <div className="flex items-end gap-2 h-[140px] bg-[#0c1a30]/[0.04] rounded-xl p-4">
-                      {[...Array(5)].map((_, i) => {
-                        const h = (bwWith / maxSatelliteBW) * 120 * (0.7 + i * 0.06)
-                        return (
-                          <div
-                            key={i}
-                            className="flex-1 bg-gradient-to-t from-emerald-400 to-emerald-300 rounded-t-lg transition-all duration-300"
-                            style={{ height: `${Math.max(8, h)}px`, opacity: 0.6 }}
-                          />
-                        )
-                      })}
+                  {/* Gauge container */}
+                  <div className="flex justify-center mb-10">
+                    <CircularGauge percentage={gaugeWith} isAlarm={false} />
+                  </div>
+
+                  {/* Value display */}
+                  <div className="text-center mb-8">
+                    <div className="text-[56px] font-display font-bold text-cyan-400" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                      {bwWith.toFixed(1)}
                     </div>
-                    <div className="mt-4 text-center">
-                      <div className="text-[32px] font-display font-bold text-emerald-500">{bwWith.toFixed(1)}</div>
-                      <div className="text-[11px] text-[#0c1a30]/40 mt-1">{lang === 'fr' ? 'Mbps utilisés' : 'Mbps in use'}</div>
+                    <div className="text-[12px] text-white/40 mt-2 tracking-wide uppercase">{lang === 'fr' ? 'Mbps optimisés' : 'Mbps optimized'}</div>
+                  </div>
+
+                  {/* Status indicator */}
+                  <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/30 p-4 mb-6">
+                    <div className="text-[13px] text-emerald-300 text-center font-medium">
+                      {lang === 'fr' ? '✓ Performance optimale' : '✓ Peak efficiency'}
                     </div>
                   </div>
 
                   {/* Details */}
-                  <div className="space-y-3 border-t border-emerald-400/10 pt-6">
+                  <div className="space-y-3 border-t border-white/5 pt-6">
                     <div className="flex justify-between items-center text-[13px]">
-                      <span className="text-[#0c1a30]/50">{lang === 'fr' ? 'Par flux' : 'Per stream'}</span>
-                      <span className="font-semibold text-[#0c1a30]">{compressedStreamBW} Mbps</span>
+                      <span className="text-white/50">{lang === 'fr' ? 'Par flux' : 'Per stream'}</span>
+                      <span className="font-semibold text-white/80" style={{ fontVariantNumeric: 'tabular-nums' }}>{compressedStreamBW} Mbps</span>
                     </div>
                     <div className="flex justify-between items-center text-[13px]">
-                      <span className="text-[#0c1a30]/50">{lang === 'fr' ? 'Flux simultanés' : 'Simultaneous'}</span>
-                      <span className="font-semibold text-[#0c1a30]">{simultaneousStreams}+</span>
+                      <span className="text-white/50">{lang === 'fr' ? 'Utilisation' : 'Utilization'}</span>
+                      <span className="font-semibold text-emerald-400" style={{ fontVariantNumeric: 'tabular-nums' }}>{(gaugeWith * 100).toFixed(0)}%</span>
                     </div>
                   </div>
                 </div>
               </Reveal>
             </div>
 
-            {/* Metrics footer */}
+            {/* Metrics footer - Key indicators */}
             <Reveal delay={250}>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="rounded-xl border border-[#0c1a30]/10 bg-[#0c1a30]/[0.02] p-6 text-center">
-                  <div className="text-[32px] font-display font-bold text-emerald-500 mb-2">{savings}%</div>
-                  <div className="text-[12px] text-[#0c1a30]/50 tracking-wide">
-                    {lang === 'fr' ? 'ÉCONOMIE DE BANDE PASSANTE' : 'BANDWIDTH SAVED'}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-8 text-center backdrop-blur-sm">
+                  <div className="text-[48px] font-display font-bold text-emerald-400 mb-3" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {savings}%
+                  </div>
+                  <div className="text-[12px] text-white/50 tracking-[0.2em] uppercase">
+                    {lang === 'fr' ? 'Économie BP' : 'Bandwidth saved'}
                   </div>
                 </div>
-                <div className="rounded-xl border border-[#0c1a30]/10 bg-[#0c1a30]/[0.02] p-6 text-center">
-                  <div className="text-[32px] font-display font-bold text-blue-500 mb-2">{remainingBW.toFixed(1)}</div>
-                  <div className="text-[12px] text-[#0c1a30]/50 tracking-wide">
-                    {lang === 'fr' ? 'MBPS DISPONIBLES' : 'MBPS REMAINING'}
+                <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-8 text-center backdrop-blur-sm">
+                  <div className="text-[48px] font-display font-bold text-cyan-400 mb-3" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {remainingBW.toFixed(1)}
+                  </div>
+                  <div className="text-[12px] text-white/50 tracking-[0.2em] uppercase">
+                    {lang === 'fr' ? 'Mbps disponibles' : 'Mbps remaining'}
                   </div>
                 </div>
-                <div className="rounded-xl border border-[#0c1a30]/10 bg-[#0c1a30]/[0.02] p-6 text-center">
-                  <div className="text-[32px] font-display font-bold text-cyan-500 mb-2">{(bwWithout / bwWith).toFixed(1)}x</div>
-                  <div className="text-[12px] text-[#0c1a30]/50 tracking-wide">
-                    {lang === 'fr' ? 'GAIN D\'EFFICACITÉ' : 'EFFICIENCY GAIN'}
+                <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-8 text-center backdrop-blur-sm">
+                  <div className="text-[48px] font-display font-bold text-blue-400 mb-3" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {(bwWithout / bwWith).toFixed(1)}x
+                  </div>
+                  <div className="text-[12px] text-white/50 tracking-[0.2em] uppercase">
+                    {lang === 'fr' ? 'Gain efficacité' : 'Efficiency gain'}
                   </div>
                 </div>
               </div>
