@@ -511,7 +511,7 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
     if (globeRef.current) {
       const g = globeRef.current
       // Camera position - nice angle
-      g.pointOfView({ lat: 30, lng: 10, altitude: 1.6 }, 0)
+      g.pointOfView({ lat: 30, lng: 10, altitude: 2.0 }, 0)
       // Auto-rotate
       const controls = g.controls()
       if (controls) {
@@ -523,7 +523,8 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
         controls.enableDamping = true
         controls.dampingFactor = 0.1
       }
-      // Force fully transparent WebGL canvas
+      // REAL transparency fix: monkey-patch the renderer so react-globe.gl
+      // can never reset the clear alpha back to 1.0 on subsequent frames
       try {
         const scene = g.scene()
         if (scene) scene.background = null
@@ -531,11 +532,15 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
         if (renderer) {
           renderer.setClearColor(0x000000, 0)
           renderer.setClearAlpha(0)
-          const canvas = renderer.domElement
-          if (canvas) {
-            canvas.style.background = 'none'
-            canvas.style.backgroundColor = 'transparent'
+          // Intercept any future setClearColor calls to always force alpha=0
+          const origSetClearColor = renderer.setClearColor.bind(renderer)
+          renderer.setClearColor = (color: any, alpha?: number) => {
+            origSetClearColor(color, 0) // always force alpha to 0
           }
+          // Also intercept setClearAlpha
+          renderer.setClearAlpha = () => { /* noop — always stay at 0 */ }
+          // Make canvas CSS transparent too
+          renderer.domElement.style.background = 'transparent'
         }
       } catch(e) { /* ignore */ }
     }
@@ -587,29 +592,17 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
         {/* Globe */}
         <Reveal delay={300}>
           <div className="relative flex justify-center" ref={containerRef}>
-            {/* Globe wrapper — no visible rectangle */}
+            {/* Globe — truly transparent canvas, no overflow clipping */}
             <div
               className="relative transition-opacity duration-1000"
               style={{
                 opacity: globeReady ? 1 : 0,
-                width: globeSize,
-                height: globeSize,
-                overflow: 'hidden',
               }}
             >
-              {/* Globe rendered 2x larger, centered, canvas edges far outside visible area */}
-              <div style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                width: globeSize * 2,
-                height: globeSize * 2,
-              }}>
               <Globe
                 ref={globeRef}
-                width={globeSize * 2}
-                height={globeSize * 2}
+                width={globeSize}
+                height={globeSize}
                 backgroundColor="rgba(0,0,0,0)"
                 rendererConfig={{ antialias: true, alpha: true }}
                 globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
@@ -662,7 +655,6 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
 
                 onGlobeReady={onGlobeReady}
               />
-              </div>
             </div>
 
             {/* Legend */}
