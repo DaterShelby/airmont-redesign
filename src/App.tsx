@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, ReactNode, useCallback } from 'react'
+import { useState, useEffect, useRef, ReactNode, useCallback, useMemo } from 'react'
+import * as THREE from 'three'
 import IMG from './images'
 
 // ─── CINEMATIC PRELOADER ─────────────────────────────────
@@ -435,204 +436,257 @@ function PartnerLogos({ lang }: { lang: Lang }) {
   )
 }
 
-// ─── SATELLITE COVERAGE MAP ──────────────────────────────
+// ─── 3D SATELLITE GLOBE ─────────────────────────────────
 function SatelliteCoverageMap({ lang }: { lang: Lang }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const frameRef = useRef(0)
-  const [hoveredSat, setHoveredSat] = useState<string | null>(null)
   const [stats, setStats] = useState({ sats: 0, coverage: 0 })
+  const mouseRef = useRef({ x: 0, y: 0, down: false })
+  const rotRef = useRef({ x: 0.3, y: 0 })
 
-  // Animated counter
+  // Animated counter on scroll
   useEffect(() => {
     let f = 0
     const t = setInterval(() => {
       f++
-      setStats({
-        sats: Math.min(Math.round(f * 12), 7200),
-        coverage: Math.min(Math.round(f * 0.5), 98)
-      })
+      setStats({ sats: Math.min(Math.round(f * 12), 7200), coverage: Math.min(Math.round(f * 0.5), 98) })
       if (f >= 200) clearInterval(t)
     }, 16)
     return () => clearInterval(t)
   }, [])
 
-  // Canvas animation - world map + orbits
+  // Three.js 3D globe
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    const container = containerRef.current
+    if (!container) return
 
-    const dpr = window.devicePixelRatio || 1
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect()
-      canvas.width = rect.width * dpr
-      canvas.height = rect.height * dpr
-      ctx.scale(dpr, dpr)
+    // Scene setup
+    const scene = new THREE.Scene()
+    const w = container.clientWidth
+    const h = Math.min(w * 0.75, 600)
+    const camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000)
+    camera.position.z = 3.2
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    renderer.setSize(w, h)
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    renderer.setClearColor(0x000000, 0)
+    container.appendChild(renderer.domElement)
+    rendererRef.current = renderer
+
+    // Globe group
+    const globeGroup = new THREE.Group()
+    scene.add(globeGroup)
+
+    // ── Earth sphere with dot matrix ──
+    const globeRadius = 1.0
+    const dotGeo = new THREE.BufferGeometry()
+    const dotPositions: number[] = []
+    const dotColors: number[] = []
+    const dotCount = 18000
+    // Create dots on sphere surface (land approximation via noise)
+    for (let i = 0; i < dotCount; i++) {
+      const phi = Math.acos(-1 + (2 * i) / dotCount)
+      const theta = Math.sqrt(dotCount * Math.PI) * phi
+      const x = globeRadius * Math.sin(phi) * Math.cos(theta)
+      const y = globeRadius * Math.cos(phi)
+      const z = globeRadius * Math.sin(phi) * Math.sin(theta)
+      // Simple land detection using sin/cos patterns (approximate continents)
+      const lat = 90 - (phi * 180 / Math.PI)
+      const lon = (theta * 180 / Math.PI) % 360 - 180
+      const isLand = checkLand(lat, lon)
+      if (isLand || Math.random() < 0.08) {
+        dotPositions.push(x, y, z)
+        if (isLand) {
+          dotColors.push(0.23, 0.51, 0.96) // blue for land
+        } else {
+          dotColors.push(0.1, 0.15, 0.3) // dark for ocean dots
+        }
+      }
     }
-    resize()
-    window.addEventListener('resize', resize)
+    dotGeo.setAttribute('position', new THREE.Float32BufferAttribute(dotPositions, 3))
+    dotGeo.setAttribute('color', new THREE.Float32BufferAttribute(dotColors, 3))
+    const dotMat = new THREE.PointsMaterial({ size: 0.012, vertexColors: true, transparent: true, opacity: 0.7, sizeAttenuation: true })
+    const dotMesh = new THREE.Points(dotGeo, dotMat)
+    globeGroup.add(dotMesh)
 
-    // Simplified world coastlines (longitude, latitude pairs for major landmasses)
-    const continents: [number, number][][] = [
-      // Europe
-      [[-10,35],[0,35],[5,37],[10,38],[15,38],[20,35],[25,35],[30,35],[35,37],[40,40],[42,42],[40,45],[30,46],[20,48],[15,55],[10,58],[5,62],[10,65],[15,70],[25,71],[30,70],[40,68],[35,60],[28,56],[25,55],[22,54],[14,54],[8,54],[5,50],[0,50],[-5,48],[-10,43],[-10,35]],
-      // Africa
-      [[-18,15],[-15,10],[-10,5],[-5,5],[5,5],[10,2],[12,0],[10,-5],[12,-10],[15,-15],[20,-20],[25,-25],[30,-30],[35,-34],[30,-34],[25,-30],[20,-25],[15,-15],[10,-10],[5,-5],[10,0],[15,5],[20,10],[25,15],[30,20],[35,30],[30,32],[25,30],[20,30],[15,30],[10,35],[5,37],[0,35],[-5,35],[-10,33],[-15,28],[-18,25],[-18,15]],
-      // Asia
-      [[40,40],[45,42],[50,40],[55,38],[60,35],[65,25],[70,20],[75,15],[80,10],[85,15],[90,22],[95,20],[100,15],[105,10],[110,20],[115,22],[120,25],[125,30],[130,35],[135,35],[140,40],[145,45],[140,50],[135,55],[130,60],[120,65],[110,70],[100,70],[90,70],[80,70],[70,70],[60,68],[50,55],[45,50],[40,45],[40,40]],
-      // North America
-      [[-170,65],[-160,70],[-140,70],[-130,65],[-125,50],[-120,35],[-115,30],[-110,25],[-105,20],[-100,18],[-95,18],[-90,20],[-85,22],[-82,25],[-80,30],[-75,35],[-70,42],[-65,45],[-60,48],[-55,50],[-60,55],[-65,60],[-70,65],[-80,70],[-90,72],[-100,75],[-110,72],[-120,70],[-130,70],[-140,68],[-150,65],[-160,63],[-170,65]],
-      // South America
-      [[-80,10],[-75,12],[-70,12],[-65,10],[-60,5],[-55,0],[-50,-5],[-45,-10],[-40,-15],[-38,-20],[-40,-25],[-45,-25],[-50,-30],[-55,-35],[-60,-40],[-65,-45],[-70,-50],[-75,-50],[-75,-45],[-72,-35],[-70,-30],[-70,-20],[-75,-15],[-80,-5],[-80,5],[-80,10]],
-      // Australia
-      [[115,-35],[120,-34],[125,-30],[130,-14],[135,-12],[140,-15],[145,-15],[150,-23],[153,-28],[150,-35],[145,-38],[140,-38],[135,-35],[130,-32],[125,-34],[120,-35],[115,-35]],
-    ]
+    // ── Atmosphere glow ──
+    const atmosGeo = new THREE.SphereGeometry(globeRadius * 1.15, 64, 64)
+    const atmosMat = new THREE.ShaderMaterial({
+      vertexShader: `varying vec3 vNormal; void main(){ vNormal = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+      fragmentShader: `varying vec3 vNormal; void main(){ float intensity = pow(0.65 - dot(vNormal, vec3(0,0,1.0)), 2.5); gl_FragColor = vec4(0.23, 0.51, 0.96, intensity * 0.4); }`,
+      blending: THREE.AdditiveBlending, side: THREE.BackSide, transparent: true
+    })
+    globeGroup.add(new THREE.Mesh(atmosGeo, atmosMat))
 
-    // Satellite constellations
+    // ── Wireframe rings (latitude/longitude) ──
+    const ringMat = new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.04 })
+    for (let i = 0; i < 12; i++) {
+      const ringGeo = new THREE.BufferGeometry()
+      const pts: THREE.Vector3[] = []
+      for (let j = 0; j <= 64; j++) {
+        const a = (j / 64) * Math.PI * 2
+        const lat = (i / 12) * Math.PI
+        pts.push(new THREE.Vector3(Math.sin(lat) * Math.cos(a) * globeRadius, Math.cos(lat) * globeRadius, Math.sin(lat) * Math.sin(a) * globeRadius))
+      }
+      ringGeo.setFromPoints(pts)
+      globeGroup.add(new THREE.Line(ringGeo, ringMat))
+    }
+    for (let i = 0; i < 24; i++) {
+      const ringGeo = new THREE.BufferGeometry()
+      const pts: THREE.Vector3[] = []
+      for (let j = 0; j <= 64; j++) {
+        const lat = (j / 64) * Math.PI
+        const lon = (i / 24) * Math.PI * 2
+        pts.push(new THREE.Vector3(Math.sin(lat) * Math.cos(lon) * globeRadius, Math.cos(lat) * globeRadius, Math.sin(lat) * Math.sin(lon) * globeRadius))
+      }
+      ringGeo.setFromPoints(pts)
+      globeGroup.add(new THREE.Line(ringGeo, ringMat))
+    }
+
+    // ── Satellite orbits ──
     const constellations = [
-      { name: 'Starlink (LEO)', color: '#3b82f6', count: 6300, alt: 550, speed: 0.8, orbits: 8 },
-      { name: 'OneWeb (LEO)', color: '#8b5cf6', count: 648, alt: 1200, speed: 0.5, orbits: 4 },
-      { name: 'Intelsat (GEO)', color: '#f59e0b', count: 50, alt: 35786, speed: 0.02, orbits: 1 },
+      { color: 0x3b82f6, radius: 1.18, speed: 0.4, inclination: 53, count: 40, orbits: 6 }, // Starlink
+      { color: 0x8b5cf6, radius: 1.30, speed: 0.25, inclination: 87, count: 16, orbits: 4 }, // OneWeb
+      { color: 0xf59e0b, radius: 1.55, speed: 0.02, inclination: 0, count: 6, orbits: 1 },   // Intelsat GEO
     ]
 
+    const satMeshes: { mesh: THREE.Mesh; orbitRadius: number; speed: number; inclination: number; phase: number; orbitPhase: number; color: number }[] = []
+
+    constellations.forEach(c => {
+      for (let o = 0; o < c.orbits; o++) {
+        // Orbit ring
+        const orbitGeo = new THREE.BufferGeometry()
+        const orbitPts: THREE.Vector3[] = []
+        for (let j = 0; j <= 128; j++) {
+          const a = (j / 128) * Math.PI * 2
+          orbitPts.push(new THREE.Vector3(Math.cos(a) * c.radius, 0, Math.sin(a) * c.radius))
+        }
+        orbitGeo.setFromPoints(orbitPts)
+        const orbitLine = new THREE.Line(orbitGeo, new THREE.LineBasicMaterial({ color: c.color, transparent: true, opacity: 0.08 }))
+        // Rotate orbit by inclination and offset
+        orbitLine.rotation.x = (c.inclination * Math.PI / 180)
+        orbitLine.rotation.y = (o / c.orbits) * Math.PI * 2
+        globeGroup.add(orbitLine)
+
+        // Satellites on this orbit
+        const satsPerOrbit = Math.ceil(c.count / c.orbits)
+        for (let s = 0; s < satsPerOrbit; s++) {
+          const satGeo = new THREE.SphereGeometry(0.012, 8, 8)
+          const satMat = new THREE.MeshBasicMaterial({ color: c.color })
+          const sat = new THREE.Mesh(satGeo, satMat)
+          globeGroup.add(sat)
+          satMeshes.push({
+            mesh: sat, orbitRadius: c.radius, speed: c.speed,
+            inclination: c.inclination * Math.PI / 180,
+            phase: (s / satsPerOrbit) * Math.PI * 2,
+            orbitPhase: (o / c.orbits) * Math.PI * 2,
+            color: c.color
+          })
+        }
+      }
+    })
+
+    // ── Airport hub points ──
+    const hubs = [
+      [48.9, 2.3], [40.6, -73.8], [33.9, -118.4], [25.3, 55.4],
+      [1.4, 103.8], [35.5, 139.8], [-33.9, 151.2], [-22.9, -43.2], [-26.1, 28.2]
+    ]
+    hubs.forEach(([lat, lon]) => {
+      const phi = (90 - lat) * Math.PI / 180
+      const theta = (lon + 180) * Math.PI / 180
+      const x = globeRadius * 1.005 * Math.sin(phi) * Math.cos(theta)
+      const y = globeRadius * 1.005 * Math.cos(phi)
+      const z = -globeRadius * 1.005 * Math.sin(phi) * Math.sin(theta)
+      const hubGeo = new THREE.SphereGeometry(0.015, 8, 8)
+      const hubMat = new THREE.MeshBasicMaterial({ color: 0x34d399 })
+      const hub = new THREE.Mesh(hubGeo, hubMat)
+      hub.position.set(x, y, z)
+      globeGroup.add(hub)
+      // Pulse ring
+      const pulseGeo = new THREE.RingGeometry(0.015, 0.025, 16)
+      const pulseMat = new THREE.MeshBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.3, side: THREE.DoubleSide })
+      const pulse = new THREE.Mesh(pulseGeo, pulseMat)
+      pulse.position.set(x, y, z)
+      pulse.lookAt(0, 0, 0)
+      globeGroup.add(pulse)
+    })
+
+    // ── Mouse interaction ──
+    const onMouseDown = (e: MouseEvent) => { mouseRef.current = { x: e.clientX, y: e.clientY, down: true } }
+    const onMouseUp = () => { mouseRef.current.down = false }
+    const onMouseMove = (e: MouseEvent) => {
+      if (!mouseRef.current.down) return
+      const dx = e.clientX - mouseRef.current.x
+      const dy = e.clientY - mouseRef.current.y
+      rotRef.current.y += dx * 0.005
+      rotRef.current.x += dy * 0.005
+      rotRef.current.x = Math.max(-1.2, Math.min(1.2, rotRef.current.x))
+      mouseRef.current.x = e.clientX
+      mouseRef.current.y = e.clientY
+    }
+    renderer.domElement.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('mouseup', onMouseUp)
+    window.addEventListener('mousemove', onMouseMove)
+    renderer.domElement.style.cursor = 'grab'
+
+    // ── Animate ──
     let time = 0
     const animate = () => {
-      const w = canvas.width / dpr
-      const h = canvas.height / dpr
-      time += 0.003
+      time += 0.005
+      // Auto-rotate + user rotation
+      if (!mouseRef.current.down) rotRef.current.y += 0.002
+      globeGroup.rotation.y = rotRef.current.y
+      globeGroup.rotation.x = rotRef.current.x
 
-      // Clear
-      ctx.clearRect(0, 0, w, h)
-
-      // Helper: lon/lat to x/y (simple equirectangular)
-      const toXY = (lon: number, lat: number): [number, number] => {
-        const x = ((lon + 180) / 360) * w
-        const y = ((90 - lat) / 180) * h
-        return [x, y]
-      }
-
-      // Grid lines
-      ctx.strokeStyle = 'rgba(59,130,246,0.04)'
-      ctx.lineWidth = 0.5
-      for (let lon = -180; lon <= 180; lon += 30) {
-        ctx.beginPath()
-        const [x] = toXY(lon, 0)
-        ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke()
-      }
-      for (let lat = -90; lat <= 90; lat += 30) {
-        ctx.beginPath()
-        const [, y] = toXY(0, lat)
-        ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke()
-      }
-
-      // Draw continents
-      continents.forEach(coast => {
-        ctx.beginPath()
-        coast.forEach(([lon, lat], i) => {
-          const [x, y] = toXY(lon, lat)
-          if (i === 0) ctx.moveTo(x, y)
-          else ctx.lineTo(x, y)
-        })
-        ctx.closePath()
-        ctx.fillStyle = 'rgba(59,130,246,0.06)'
-        ctx.fill()
-        ctx.strokeStyle = 'rgba(59,130,246,0.12)'
-        ctx.lineWidth = 0.8
-        ctx.stroke()
+      // Update satellite positions
+      satMeshes.forEach(s => {
+        const angle = s.phase + time * s.speed * 10
+        const x = Math.cos(angle) * s.orbitRadius
+        const z = Math.sin(angle) * s.orbitRadius
+        // Apply inclination and orbit offset rotation
+        const cosI = Math.cos(s.inclination)
+        const sinI = Math.sin(s.inclination)
+        const cosO = Math.cos(s.orbitPhase)
+        const sinO = Math.sin(s.orbitPhase)
+        // Rotate by inclination around X, then by orbitPhase around Y
+        const y1 = z * sinI
+        const z1 = z * cosI
+        const x2 = x * cosO - z1 * sinO
+        const z2 = x * sinO + z1 * cosO
+        s.mesh.position.set(x2, y1, z2)
       })
 
-      // Draw satellite orbits and dots
-      constellations.forEach((c, ci) => {
-        for (let o = 0; o < c.orbits; o++) {
-          const orbitOffset = (o / c.orbits) * Math.PI * 2
-          const inclination = 40 + ci * 25 // different inclinations per constellation
-
-          // Draw orbit path (sinusoidal on mercator)
-          ctx.beginPath()
-          ctx.strokeStyle = c.color.replace(')', ',0.06)')
-          if (c.color.startsWith('#')) {
-            const r = parseInt(c.color.slice(1, 3), 16)
-            const g = parseInt(c.color.slice(3, 5), 16)
-            const b = parseInt(c.color.slice(5, 7), 16)
-            ctx.strokeStyle = `rgba(${r},${g},${b},0.06)`
-          }
-          ctx.lineWidth = 0.5
-
-          for (let step = 0; step <= 360; step += 2) {
-            const lon = step - 180
-            const lat = Math.sin((step * Math.PI / 180) + orbitOffset + time * c.speed * 50) * inclination
-            const [x, y] = toXY(lon, lat)
-            if (step === 0) ctx.moveTo(x, y)
-            else ctx.lineTo(x, y)
-          }
-          ctx.stroke()
-
-          // Draw satellites on this orbit
-          const satCount = Math.ceil(c.count / c.orbits / 20) // representative count
-          for (let s = 0; s < satCount; s++) {
-            const satPhase = (s / satCount) * 360
-            const lon = ((satPhase + time * c.speed * 2000) % 360) - 180
-            const lat = Math.sin(((satPhase + time * c.speed * 2000) * Math.PI / 180) + orbitOffset) * inclination
-            const [x, y] = toXY(lon, lat)
-
-            // Glow
-            const gradient = ctx.createRadialGradient(x, y, 0, x, y, 6)
-            const r = parseInt(c.color.slice(1, 3), 16)
-            const g = parseInt(c.color.slice(3, 5), 16)
-            const b = parseInt(c.color.slice(5, 7), 16)
-            gradient.addColorStop(0, `rgba(${r},${g},${b},0.3)`)
-            gradient.addColorStop(1, `rgba(${r},${g},${b},0)`)
-            ctx.fillStyle = gradient
-            ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill()
-
-            // Dot
-            ctx.fillStyle = `rgba(${r},${g},${b},0.7)`
-            ctx.beginPath(); ctx.arc(x, y, 1.2, 0, Math.PI * 2); ctx.fill()
-          }
-        }
-      })
-
-      // Coverage pulse circles at key locations (airports/ports)
-      const locations = [
-        { lon: 2.3, lat: 48.9 },    // Paris CDG
-        { lon: -73.8, lat: 40.6 },   // NYC JFK
-        { lon: -118.4, lat: 33.9 },  // LAX
-        { lon: 55.4, lat: 25.3 },    // Dubai
-        { lon: 103.8, lat: 1.4 },    // Singapore
-        { lon: 139.8, lat: 35.5 },   // Tokyo
-        { lon: -43.2, lat: -22.9 },  // Rio
-        { lon: 151.2, lat: -33.9 },  // Sydney
-        { lon: 28.2, lat: -26.1 },   // Johannesburg
-      ]
-      locations.forEach(loc => {
-        const [x, y] = toXY(loc.lon, loc.lat)
-        const pulse = (Math.sin(time * 3 + loc.lon) + 1) * 0.5
-        ctx.beginPath()
-        ctx.arc(x, y, 3 + pulse * 8, 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(52,211,153,${0.08 - pulse * 0.06})`
-        ctx.fill()
-        ctx.beginPath()
-        ctx.arc(x, y, 2, 0, Math.PI * 2)
-        ctx.fillStyle = 'rgba(52,211,153,0.5)'
-        ctx.fill()
-      })
-
+      renderer.render(scene, camera)
       frameRef.current = requestAnimationFrame(animate)
     }
     frameRef.current = requestAnimationFrame(animate)
 
+    // ── Resize ──
+    const onResize = () => {
+      const nw = container.clientWidth
+      const nh = Math.min(nw * 0.75, 600)
+      camera.aspect = nw / nh
+      camera.updateProjectionMatrix()
+      renderer.setSize(nw, nh)
+    }
+    window.addEventListener('resize', onResize)
+
     return () => {
       cancelAnimationFrame(frameRef.current)
-      window.removeEventListener('resize', resize)
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener('mouseup', onMouseUp)
+      window.removeEventListener('mousemove', onMouseMove)
+      renderer.dispose()
+      if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement)
     }
   }, [])
 
   return (
     <section className="py-24 lg:py-32 bg-[#060d1b] relative overflow-hidden">
-      {/* Background glow */}
       <div className="absolute inset-0">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[600px] rounded-full bg-blue-500/[0.03] blur-[120px]" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[900px] h-[900px] rounded-full bg-blue-500/[0.03] blur-[150px]" />
       </div>
 
       <div className="relative z-10 max-w-[1400px] mx-auto px-6 lg:px-10">
@@ -650,9 +704,8 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
           </p>
         </Reveal>
 
-        {/* Stats bar */}
         <Reveal delay={200}>
-          <div className="flex justify-center gap-10 lg:gap-16 mb-10">
+          <div className="flex justify-center gap-10 lg:gap-16 mb-8">
             <div className="text-center">
               <div className="text-[28px] lg:text-[36px] font-bold text-white/90 tabular-nums">{stats.sats.toLocaleString()}+</div>
               <div className="text-[10px] tracking-[0.15em] uppercase text-white/20 mt-1">{lang === 'fr' ? 'Satellites compatibles' : 'Compatible satellites'}</div>
@@ -665,59 +718,76 @@ function SatelliteCoverageMap({ lang }: { lang: Lang }) {
             <div className="w-px bg-white/[0.06]" />
             <div className="text-center">
               <div className="text-[28px] lg:text-[36px] font-bold text-white/90">3</div>
-              <div className="text-[10px] tracking-[0.15em] uppercase text-white/20 mt-1">{lang === 'fr' ? 'Types d\'orbites' : 'Orbit types'}</div>
+              <div className="text-[10px] tracking-[0.15em] uppercase text-white/20 mt-1">{lang === 'fr' ? "Types d'orbites" : 'Orbit types'}</div>
             </div>
           </div>
         </Reveal>
 
-        {/* Map canvas */}
         <Reveal delay={300}>
-          <div className="relative rounded-[16px] overflow-hidden border border-white/[0.04] bg-[#080f20]">
-            <canvas
-              ref={canvasRef}
-              className="w-full"
-              style={{ height: 'clamp(280px, 40vw, 480px)' }}
-            />
-
-            {/* Constellation legend */}
-            <div className="absolute bottom-4 left-4 flex flex-col gap-2">
+          <div className="relative">
+            <div ref={containerRef} className="w-full flex justify-center" />
+            {/* Legend overlay */}
+            <div className="absolute bottom-6 left-6 flex flex-col gap-2 z-10">
               {[
-                { name: 'Starlink (LEO · 550km)', color: '#3b82f6', sats: '6 300+' },
-                { name: 'OneWeb (LEO · 1 200km)', color: '#8b5cf6', sats: '648' },
-                { name: 'Intelsat (GEO · 35 786km)', color: '#f59e0b', sats: '50+' },
+                { name: 'Starlink · LEO 550km', color: '#3b82f6', count: '6 300+' },
+                { name: 'OneWeb · LEO 1 200km', color: '#8b5cf6', count: '648' },
+                { name: 'Intelsat · GEO 35 786km', color: '#f59e0b', count: '50+' },
               ].map(c => (
-                <div
-                  key={c.name}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm cursor-default hover:bg-black/60 transition-colors"
-                  onMouseEnter={() => setHoveredSat(c.name)}
-                  onMouseLeave={() => setHoveredSat(null)}
-                >
-                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color, boxShadow: `0 0 6px ${c.color}` }} />
+                <div key={c.name} className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/[0.04]">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: c.color, boxShadow: `0 0 8px ${c.color}` }} />
                   <span className="text-[10px] text-white/50 font-medium">{c.name}</span>
-                  <span className="text-[9px] text-white/25 ml-1">{c.sats} sats</span>
+                  <span className="text-[9px] text-white/25">{c.count}</span>
                 </div>
               ))}
             </div>
-
-            {/* Pulse points legend */}
-            <div className="absolute bottom-4 right-4 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm">
-              <div className="w-2 h-2 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 6px rgba(52,211,153,0.5)' }} />
-              <span className="text-[10px] text-white/40">{lang === 'fr' ? 'Hubs aéroportuaires majeurs' : 'Major airport hubs'}</span>
+            <div className="absolute bottom-6 right-6 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/50 backdrop-blur-md border border-white/[0.04] z-10">
+              <div className="w-2 h-2 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 8px rgba(52,211,153,0.6)' }} />
+              <span className="text-[10px] text-white/40">{lang === 'fr' ? 'Hubs aéroportuaires' : 'Airport hubs'}</span>
+            </div>
+            <div className="absolute top-4 right-6 text-[9px] text-white/15 z-10">
+              {lang === 'fr' ? '↕ Glisser pour pivoter' : '↕ Drag to rotate'}
             </div>
           </div>
         </Reveal>
 
-        {/* Bottom note */}
         <Reveal delay={400}>
           <p className="text-center text-[11px] text-white/15 mt-6 max-w-[600px] mx-auto">
             {lang === 'fr'
-              ? "Airmont est agnostique : compatible Ku-band, Ka-band, L-band, LEO et GEO. Pas de dépendance à un seul opérateur."
-              : 'Airmont is agnostic: compatible with Ku-band, Ka-band, L-band, LEO and GEO. No single-operator dependency.'}
+              ? "Airmont est agnostique : compatible Ku-band, Ka-band, L-band, LEO et GEO. Aucune dépendance opérateur."
+              : 'Airmont is agnostic: Ku-band, Ka-band, L-band, LEO & GEO compatible. Zero operator lock-in.'}
           </p>
         </Reveal>
       </div>
     </section>
   )
+}
+
+// Approximate land detection by lat/lon (simple bounding boxes for continents)
+function checkLand(lat: number, lon: number): boolean {
+  // Europe
+  if (lat > 35 && lat < 72 && lon > -12 && lon < 45) return true
+  // Africa
+  if (lat > -35 && lat < 37 && lon > -20 && lon < 52) {
+    if (lat < 5 && lon > 42) return false // Horn trimming
+    return true
+  }
+  // Asia
+  if (lat > 5 && lat < 75 && lon > 45 && lon < 150) return true
+  // India
+  if (lat > 8 && lat < 35 && lon > 68 && lon < 90) return true
+  // North America
+  if (lat > 15 && lat < 72 && lon > -170 && lon < -50) return true
+  // South America
+  if (lat > -56 && lat < 13 && lon > -82 && lon < -34) return true
+  // Australia
+  if (lat > -45 && lat < -10 && lon > 112 && lon < 155) return true
+  // Japan/Korea
+  if (lat > 30 && lat < 46 && lon > 128 && lon < 146) return true
+  // Indonesia/SEA
+  if (lat > -10 && lat < 8 && lon > 95 && lon < 140) return true
+  // UK/Ireland
+  if (lat > 50 && lat < 60 && lon > -11 && lon < 2) return true
+  return false
 }
 
 // ─── TEXT SCRAMBLE ───────────────────────────────────────
