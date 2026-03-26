@@ -1046,6 +1046,342 @@ function ContactModal({ open, onClose, lang, mode = 'demo' }: { open: boolean; o
   )
 }
 
+// ─── ANIMATED DATA FLOW ─────────────────────────────────
+// Enhanced streaming flow with animated particles and visual compression
+function StreamingFlowAnimated({ lang }: { lang: Lang }) {
+  const containerRef = useRef<SVGSVGElement>(null)
+  const [particles, setParticles] = useState<Array<{ id: number; x: number; y: number; stage: number; progress: number }>>([])
+
+  useEffect(() => {
+    const particles: typeof particles = []
+    let id = 0
+    const interval = setInterval(() => {
+      particles.push({ id: id++, x: 0, y: 0, stage: 0, progress: 0 })
+      if (particles.length > 60) particles.shift()
+      setParticles([...particles])
+    }, 150)
+    return () => clearInterval(interval)
+  }, [])
+
+  const stagePositions = [
+    { x: 60, y: 77 },      // Content Source
+    { x: 200, y: 77 },     // Compression
+    { x: 340, y: 77 },     // Satellite uplink
+    { x: 480, y: 77 },     // Aircraft
+    { x: 620, y: 77 },     // Passenger devices
+  ]
+
+  const animatedParticles = particles.map(p => {
+    const newProgress = (p.progress + 0.02) % 1
+    let stage = Math.floor(newProgress * 5)
+    if (stage >= 5) stage = 4
+    const stageProgress = (newProgress * 5) % 1
+    const startPos = stagePositions[stage]
+    const endPos = stagePositions[Math.min(stage + 1, 4)]
+    const x = startPos.x + (endPos.x - startPos.x) * stageProgress
+    const y = startPos.y + (endPos.y - startPos.y) * stageProgress * 0.15 - 15
+    // Particles shrink at compression stage (stage 1)
+    const size = stage === 1 ? 2.5 + (1 - stageProgress) * 1.5 : 3.5
+    const opacity = 1 - Math.abs(newProgress - 0.5) * 0.4
+    return { ...p, x, y, stage, progress: newProgress, size, opacity }
+  })
+
+  return (
+    <div className="relative rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.01] p-8 lg:p-10 overflow-hidden">
+      <div className="flex items-center gap-3 mb-8">
+        <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
+        <span className="text-[12px] font-semibold tracking-[0.15em] uppercase text-white/30">{lang === 'fr' ? 'Flux de données optimisé' : 'Optimized Data Flow'}</span>
+      </div>
+
+      <svg ref={containerRef} viewBox="0 0 700 160" className="w-full max-w-[700px] mx-auto">
+        {/* Connection paths */}
+        <line x1="90" y1="77" x2="170" y2="77" stroke="rgba(59,130,246,0.15)" strokeWidth="1.5" />
+        <line x1="230" y1="77" x2="310" y2="77" stroke="rgba(59,130,246,0.15)" strokeWidth="1.5" />
+        <line x1="370" y1="77" x2="450" y2="77" stroke="rgba(52,211,153,0.15)" strokeWidth="1.5" />
+        <line x1="510" y1="77" x2="590" y2="77" stroke="rgba(52,211,153,0.15)" strokeWidth="1.5" />
+
+        {/* Animated particles */}
+        {animatedParticles.map(p => (
+          <circle
+            key={p.id}
+            cx={p.x}
+            cy={p.y}
+            r={p.size}
+            fill={p.stage <= 1 ? 'rgba(59,130,246,0.6)' : 'rgba(52,211,153,0.6)'}
+            opacity={p.opacity}
+          />
+        ))}
+
+        {/* Stage 1: Content Source */}
+        <g>
+          <rect x="40" y="57" width="40" height="40" rx="8" fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.25)" strokeWidth="1.5" />
+          <circle cx="60" cy="77" r="8" fill="rgba(59,130,246,0.3)">
+            <animate attributeName="r" values="8;14;8" dur="2s" repeatCount="indefinite" />
+            <animate attributeName="opacity" values="0.3;0;0.3" dur="2s" repeatCount="indefinite" />
+          </circle>
+          <text x="60" y="110" fill="rgba(255,255,255,0.5)" fontSize="10" fontFamily="Inter, sans-serif" fontWeight="600" textAnchor="middle">
+            {lang === 'fr' ? 'Source' : 'Source'}
+          </text>
+        </g>
+
+        {/* Stage 2: Compression with visual shrinking effect */}
+        <g>
+          <rect x="170" y="57" width="60" height="40" rx="8" fill="rgba(59,130,246,0.08)" stroke="rgba(139,92,246,0.25)" strokeWidth="1.5" />
+          <g opacity="0.8">
+            <circle cx="190" cy="77" r="6" fill="rgba(139,92,246,0.4)" />
+            <circle cx="200" cy="70" r="5.5" fill="rgba(139,92,246,0.35)" />
+            <circle cx="210" cy="77" r="5" fill="rgba(139,92,246,0.3)" />
+            <circle cx="220" cy="73" r="4.5" fill="rgba(139,92,246,0.25)" />
+          </g>
+          <text x="200" y="110" fill="rgba(255,255,255,0.5)" fontSize="10" fontFamily="Inter, sans-serif" fontWeight="600" textAnchor="middle">
+            {lang === 'fr' ? 'Compression' : 'Compression'}
+          </text>
+          <text x="200" y="125" fill="rgba(52,211,153,0.4)" fontSize="9" fontFamily="Inter, sans-serif" textAnchor="middle">
+            550 Kbps
+          </text>
+        </g>
+
+        {/* Stage 3: Satellite uplink */}
+        <g>
+          <rect x="310" y="57" width="60" height="40" rx="8" fill="rgba(59,130,246,0.08)" stroke="rgba(59,130,246,0.25)" strokeWidth="1.5" />
+          <circle cx="340" cy="68" r="4" fill="rgba(59,130,246,0.4)" />
+          <path d="M 335 77 L 330 85 M 340 77 L 340 86 M 345 77 L 350 85" stroke="rgba(59,130,246,0.35)" strokeWidth="1" strokeLinecap="round" />
+          <circle cx="340" cy="77" r="6" fill="none" stroke="rgba(59,130,246,0.2)" strokeWidth="1">
+            <animate attributeName="r" values="6;12;6" dur="2.5s" repeatCount="indefinite" />
+            <animate attributeName="opacity" values="0.2;0;0.2" dur="2.5s" repeatCount="indefinite" />
+          </circle>
+          <text x="340" y="110" fill="rgba(255,255,255,0.5)" fontSize="10" fontFamily="Inter, sans-serif" fontWeight="600" textAnchor="middle">
+            {lang === 'fr' ? 'Satellite' : 'Satellite'}
+          </text>
+        </g>
+
+        {/* Stage 4: Aircraft */}
+        <g>
+          <rect x="450" y="57" width="60" height="40" rx="8" fill="rgba(52,211,153,0.08)" stroke="rgba(52,211,153,0.25)" strokeWidth="1.5" />
+          <path d="M 470 87 L 490 77 L 470 67 Z M 490 77 L 510 77" fill="rgba(52,211,153,0.3)" stroke="rgba(52,211,153,0.4)" strokeWidth="1.5" strokeLinejoin="round" />
+          <text x="480" y="110" fill="rgba(255,255,255,0.5)" fontSize="10" fontFamily="Inter, sans-serif" fontWeight="600" textAnchor="middle">
+            {lang === 'fr' ? 'Appareil' : 'Aircraft'}
+          </text>
+        </g>
+
+        {/* Stage 5: Passenger devices */}
+        <g>
+          <rect x="590" y="57" width="70" height="40" rx="8" fill="rgba(52,211,153,0.08)" stroke="rgba(52,211,153,0.25)" strokeWidth="1.5" />
+          <rect x="605" y="65" width="12" height="18" rx="2" fill="none" stroke="rgba(52,211,153,0.4)" strokeWidth="1" />
+          <line x1="607" y1="67" x2="615" y2="67" stroke="rgba(52,211,153,0.3)" strokeWidth="0.5" />
+          <rect x="625" y="63" width="16" height="22" rx="2" fill="none" stroke="rgba(52,211,153,0.4)" strokeWidth="1" />
+          <line x1="627" y1="65" x2="639" y2="65" stroke="rgba(52,211,153,0.3)" strokeWidth="0.5" />
+          <text x="625" y="110" fill="rgba(255,255,255,0.5)" fontSize="10" fontFamily="Inter, sans-serif" fontWeight="600" textAnchor="middle">
+            {lang === 'fr' ? 'Appareils' : 'Devices'}
+          </text>
+        </g>
+
+        {/* Bottom label */}
+        <text x="350" y="150" fill="rgba(255,255,255,0.15)" fontSize="9" fontFamily="Inter, sans-serif" textAnchor="middle" letterSpacing="1">
+          {lang === 'fr' ? 'Technologie Streamtime — Isolation · Compression · Optimisation' : 'Streamtime Technology — Isolation · Compression · Optimization'}
+        </text>
+      </svg>
+
+      <div className="mt-6 grid grid-cols-3 gap-4 text-center text-sm">
+        <div>
+          <div className="text-emerald-400/70 font-semibold">50+</div>
+          <div className="text-[11px] text-white/20 mt-1">{lang === 'fr' ? 'Flux simultanés' : 'Simultaneous streams'}</div>
+        </div>
+        <div>
+          <div className="text-blue-400/70 font-semibold">-40%</div>
+          <div className="text-[11px] text-white/20 mt-1">{lang === 'fr' ? 'Économie BP' : 'Bandwidth savings'}</div>
+        </div>
+        <div>
+          <div className="text-cyan-400/70 font-semibold">HD</div>
+          <div className="text-[11px] text-white/20 mt-1">{lang === 'fr' ? 'Qualité garantie' : 'Quality guaranteed'}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── BANDWIDTH SIMULATOR ────────────────────────────────
+// Interactive slider comparing bandwidth usage with/without Airmont
+function BandwidthSimulator({ lang }: { lang: Lang }) {
+  const [passengers, setPassengers] = useState(50)
+  const maxSatelliteBW = 100 // Mbps total available
+  const standardStreamBW = 3.5 // Mbps per stream
+  const compressedStreamBW = 0.55 // Mbps per stream (550 Kbps)
+
+  const bwWithout = Math.min(passengers * standardStreamBW, maxSatelliteBW)
+  const bwWith = Math.min(passengers * compressedStreamBW, maxSatelliteBW)
+  const savings = ((bwWithout - bwWith) / bwWithout * 100).toFixed(1)
+  const simultaneousStreams = Math.floor(maxSatelliteBW / compressedStreamBW)
+  const remainingBW = Math.max(0, maxSatelliteBW - bwWith)
+
+  return (
+    <section className="py-24 lg:py-32 relative overflow-hidden">
+      <div className="absolute inset-0">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] rounded-full bg-blue-500/[0.04] blur-[150px]" />
+        <div className="absolute bottom-0 right-0 w-[600px] h-[500px] rounded-full bg-emerald-500/[0.03] blur-[120px]" />
+      </div>
+
+      <div className="relative z-10 max-w-[1400px] mx-auto px-6 lg:px-10">
+        <Reveal className="text-center mb-16 lg:mb-20">
+          <SectionLabel>{lang === 'fr' ? 'Simulateur de performance' : 'Performance Simulator'}</SectionLabel>
+          <h2 className="font-display text-[clamp(32px,4vw,52px)] font-bold tracking-tight text-[#0c1a30] leading-[1.1]">
+            {lang === 'fr' ? 'Voyez la différence en temps réel.' : 'See the difference in real-time.'}
+          </h2>
+          <p className="mt-5 text-[16px] text-[#0c1a30]/35 max-w-[560px] mx-auto">
+            {lang === 'fr'
+              ? 'Ajustez le nombre de passagers et découvrez comment Streamtime optimise votre bande passante satellite.'
+              : 'Adjust passenger count and discover how Streamtime optimizes your satellite bandwidth.'}
+          </p>
+        </Reveal>
+
+        <Reveal delay={100}>
+          <div className="max-w-[1000px] mx-auto">
+            {/* Slider control */}
+            <div className="mb-12 px-6 lg:px-0">
+              <div className="flex items-center justify-between mb-4">
+                <label className="text-[14px] font-semibold text-[#0c1a30]/60">
+                  {lang === 'fr' ? 'Nombre de passagers' : 'Number of Passengers'}
+                </label>
+                <div className="text-[28px] font-display font-bold text-blue-600">{passengers}</div>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="200"
+                value={passengers}
+                onChange={(e) => setPassengers(parseInt(e.target.value))}
+                className="w-full h-2 bg-[#0c1a30]/10 rounded-lg appearance-none cursor-pointer slider"
+                style={{
+                  background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(passengers/200)*100}%, rgba(12,26,48,0.1) ${(passengers/200)*100}%, rgba(12,26,48,0.1) 100%)`
+                }}
+              />
+              <div className="flex justify-between text-[11px] text-[#0c1a30]/30 mt-2">
+                <span>1</span>
+                <span>200</span>
+              </div>
+            </div>
+
+            {/* Comparison cards */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">
+              {/* Without Airmont */}
+              <Reveal delay={150}>
+                <div className="rounded-2xl border border-red-400/20 bg-gradient-to-br from-red-50/40 to-red-50/10 p-8 lg:p-10">
+                  <div className="flex items-center gap-3 mb-8">
+                    <div className="w-3 h-3 rounded-full bg-red-400/50" />
+                    <h3 className="text-[16px] font-bold text-[#0c1a30] tracking-tight">
+                      {lang === 'fr' ? 'Sans Streamtime' : 'Without Streamtime'}
+                    </h3>
+                  </div>
+
+                  {/* Bandwidth gauge */}
+                  <div className="mb-8">
+                    <div className="flex items-end gap-2 h-[140px] bg-[#0c1a30]/[0.04] rounded-xl p-4">
+                      {[...Array(5)].map((_, i) => {
+                        const h = (bwWithout / maxSatelliteBW) * 120 * (0.7 + i * 0.06)
+                        return (
+                          <div
+                            key={i}
+                            className="flex-1 bg-gradient-to-t from-red-400 to-red-300 rounded-t-lg transition-all duration-300"
+                            style={{ height: `${Math.max(8, h)}px`, opacity: 0.6 }}
+                          />
+                        )
+                      })}
+                    </div>
+                    <div className="mt-4 text-center">
+                      <div className="text-[32px] font-display font-bold text-red-500">{bwWithout.toFixed(1)}</div>
+                      <div className="text-[11px] text-[#0c1a30]/40 mt-1">{lang === 'fr' ? 'Mbps utilisés' : 'Mbps in use'}</div>
+                    </div>
+                  </div>
+
+                  {/* Details */}
+                  <div className="space-y-3 border-t border-red-400/10 pt-6">
+                    <div className="flex justify-between items-center text-[13px]">
+                      <span className="text-[#0c1a30]/50">{lang === 'fr' ? 'Par flux' : 'Per stream'}</span>
+                      <span className="font-semibold text-[#0c1a30]">{standardStreamBW} Mbps</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[13px]">
+                      <span className="text-[#0c1a30]/50">{lang === 'fr' ? 'Flux simultanés' : 'Simultaneous'}</span>
+                      <span className="font-semibold text-[#0c1a30]">~{Math.floor(passengers * 0.3)}</span>
+                    </div>
+                  </div>
+                </div>
+              </Reveal>
+
+              {/* With Airmont */}
+              <Reveal delay={200}>
+                <div className="rounded-2xl border border-emerald-400/20 bg-gradient-to-br from-emerald-50/40 to-emerald-50/10 p-8 lg:p-10">
+                  <div className="flex items-center gap-3 mb-8">
+                    <div className="w-3 h-3 rounded-full bg-emerald-400/50" />
+                    <h3 className="text-[16px] font-bold text-[#0c1a30] tracking-tight">
+                      {lang === 'fr' ? 'Avec Streamtime' : 'With Streamtime'}
+                    </h3>
+                  </div>
+
+                  {/* Bandwidth gauge */}
+                  <div className="mb-8">
+                    <div className="flex items-end gap-2 h-[140px] bg-[#0c1a30]/[0.04] rounded-xl p-4">
+                      {[...Array(5)].map((_, i) => {
+                        const h = (bwWith / maxSatelliteBW) * 120 * (0.7 + i * 0.06)
+                        return (
+                          <div
+                            key={i}
+                            className="flex-1 bg-gradient-to-t from-emerald-400 to-emerald-300 rounded-t-lg transition-all duration-300"
+                            style={{ height: `${Math.max(8, h)}px`, opacity: 0.6 }}
+                          />
+                        )
+                      })}
+                    </div>
+                    <div className="mt-4 text-center">
+                      <div className="text-[32px] font-display font-bold text-emerald-500">{bwWith.toFixed(1)}</div>
+                      <div className="text-[11px] text-[#0c1a30]/40 mt-1">{lang === 'fr' ? 'Mbps utilisés' : 'Mbps in use'}</div>
+                    </div>
+                  </div>
+
+                  {/* Details */}
+                  <div className="space-y-3 border-t border-emerald-400/10 pt-6">
+                    <div className="flex justify-between items-center text-[13px]">
+                      <span className="text-[#0c1a30]/50">{lang === 'fr' ? 'Par flux' : 'Per stream'}</span>
+                      <span className="font-semibold text-[#0c1a30]">{compressedStreamBW} Mbps</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[13px]">
+                      <span className="text-[#0c1a30]/50">{lang === 'fr' ? 'Flux simultanés' : 'Simultaneous'}</span>
+                      <span className="font-semibold text-[#0c1a30]">{simultaneousStreams}+</span>
+                    </div>
+                  </div>
+                </div>
+              </Reveal>
+            </div>
+
+            {/* Metrics footer */}
+            <Reveal delay={250}>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="rounded-xl border border-[#0c1a30]/10 bg-[#0c1a30]/[0.02] p-6 text-center">
+                  <div className="text-[32px] font-display font-bold text-emerald-500 mb-2">{savings}%</div>
+                  <div className="text-[12px] text-[#0c1a30]/50 tracking-wide">
+                    {lang === 'fr' ? 'ÉCONOMIE DE BANDE PASSANTE' : 'BANDWIDTH SAVED'}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-[#0c1a30]/10 bg-[#0c1a30]/[0.02] p-6 text-center">
+                  <div className="text-[32px] font-display font-bold text-blue-500 mb-2">{remainingBW.toFixed(1)}</div>
+                  <div className="text-[12px] text-[#0c1a30]/50 tracking-wide">
+                    {lang === 'fr' ? 'MBPS DISPONIBLES' : 'MBPS REMAINING'}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-[#0c1a30]/10 bg-[#0c1a30]/[0.02] p-6 text-center">
+                  <div className="text-[32px] font-display font-bold text-cyan-500 mb-2">{(bwWithout / bwWith).toFixed(1)}x</div>
+                  <div className="text-[12px] text-[#0c1a30]/50 tracking-wide">
+                    {lang === 'fr' ? 'GAIN D\'EFFICACITÉ' : 'EFFICIENCY GAIN'}
+                  </div>
+                </div>
+              </div>
+            </Reveal>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
 // ─── I18N ───────────────────────────────────────────────
 type Lang = 'fr' | 'en'
 const T = {
@@ -1280,6 +1616,9 @@ function HomePage({ setPage, lang, onContact }: { setPage: (p: string) => void; 
       {/* ═══ SATELLITE COVERAGE MAP ═══ */}
       <SatelliteCoverageMap lang={lang} />
 
+      {/* ═══ BANDWIDTH SIMULATOR ═══ */}
+      <BandwidthSimulator lang={lang} />
+
       {/* ═══ SEGMENTS ═══ */}
       <section id="segments" className="py-24 lg:py-32 relative overflow-hidden">
         <GradientMesh />
@@ -1398,7 +1737,7 @@ function HomePage({ setPage, lang, onContact }: { setPage: (p: string) => void; 
           </Reveal>
 
           {/* Streaming flow diagram — shows how Airmont optimizes data */}
-          <Reveal className="mb-10"><StreamingFlowDiagram lang={lang} /></Reveal>
+          <Reveal className="mb-10"><StreamingFlowAnimated lang={lang} /></Reveal>
 
           {/* Mutualisation visual — the killer feature */}
           <Reveal className="mb-16"><MutualisationViz lang={lang} /></Reveal>
